@@ -50,7 +50,7 @@
 					super(domElement, false)
 				}
 
-				// Called during construction to allow the app to populate the THREE.Scene
+				// Called after the session is created to allow the app to populate the THREE.Scene
 				initializeScene(){
 					// Add a teapot at about eye level
 					const geometry = new THREE.TeapotBufferGeometry(0.1)
@@ -61,8 +61,17 @@
 						side: THREE.DoubleSide
 					})
 					const mesh = new THREE.Mesh(geometry, material)
-					mesh.position.set(0, 1.4, -1)
-					this.floorGroup.add(mesh)
+					mesh.position.set(0, 0, -1)
+
+					this.session.requestFrameOfReference('eyeLevel').then(frame => {
+						const eyeLevelObject = this.getXRObject3D(frame)
+						eyeLevelObject.add(mesh)
+					}).catch(()=>{
+						this.session.requestFrameOfReference('headModel').then(frame => {	
+							const headModelObject = this.getXRObject3D(frame)
+							headModelObject.add(mesh)
+						})
+					})
 
 					// Add a box on the floor
 					const box = new THREE.Mesh(

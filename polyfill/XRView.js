@@ -13,7 +13,7 @@ export default class XRView {
 		this._eye = eye
 		this._viewport = new XRViewport(0, 0, 1, 1)
 		this._projectionMatrix = new Float32Array(16)
-		this._viewMatrix = new Float32Array(16)
+		this._viewMatrix = null
 		MatrixMath.mat4_perspectiveFromFieldOfView(this._projectionMatrix, this._fov, this._depthNear, this._depthFar)
 	}
 
@@ -30,6 +30,7 @@ export default class XRView {
 	get viewMatrix(){ return this._viewMatrix }
 
 	setViewMatrix(array16){
+		if (!this._viewMatrix) this._viewMatrix = new Float32Array(16)
 		for(let i=0; i < 16; i++){
 			this._viewMatrix[i] = array16[i]
 		}

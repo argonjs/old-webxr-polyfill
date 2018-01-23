@@ -1,28 +1,33 @@
 import EventHandlerBase from './fill/EventHandlerBase.js'
 
 /*
-A script that wishes to make use of an XRDisplay can request an XRSession.
+A script that wishes to make use of an XRDevice can request an XRSession.
 An XRSession provides a list of the available Reality instances that the script may request as well as make a request for an animation frame.
 */
 export default class XRSession extends EventHandlerBase {
-	constructor(xr, display, createParameters){
+	constructor(xr, device, createParameters, reality){
 		super(xr)
 		this._xr = xr
-		this._display = display
+		this._device = device
 		this._createParameters = createParameters
+		this._reality = reality
 		this._ended = false
 
 		this._baseLayer = null
-		this._stageBounds = null
+
+		this._callbackId = 0
+		this._callbacks = {}
+		this._nextFramePromise = null
+		this._nextFrameResolve = null
 	}
 
-	get display(){ return this._display }
+	get device(){ return this._device }
 
 	get createParameters(){ return this._parameters }
 
 	get realities(){ return this._xr._sharedRealities }
 
-	get reality(){ return this._display._reality }
+	get reality(){ return this._reality }
 
 	get baseLayer(){
 		return this._baseLayer
@@ -30,43 +35,93 @@ export default class XRSession extends EventHandlerBase {
 
 	set baseLayer(value){
 		this._baseLayer = value
-		this._display._handleNewBaseLayer(this._baseLayer)
+		this.dispatchEvent(new CustomEvent('_baseLayerChanged'))
 	}
 
-	get depthNear(){ this._display._depthNear }
-	set depthNear(value){ this._display._depthNear = value }
+	get depthNear(){ this._device._depthNear }
+	set depthNear(value){ this._device._depthNear = value }
 
-	get depthFar(){ this._display._depthFar }
-	set depthFar(value){ this._display._depthFar = value }
+	get depthFar(){ this._device._depthFar }
+	set depthFar(value){ this._device._depthFar = value }
 
-	get hasStageBounds(){ this._stageBounds !== null }
-
-	get stageBounds(){ return this._stageBounds }
-
-	requestFrame(callback){
+	requestAnimationFrame(callback) {
 		if(this._ended) return null
 		if(typeof callback !== 'function'){
 			throw 'Invalid callback'
 		}
-		return this._display._requestAnimationFrame(() => {
-			const frame = this._createPresentationFrame()
-			this._display._reality._handleNewFrame(frame)
-			this._display._handleNewFrame(frame)
-			callback(frame)
-			this._display._handleAfterFrame(frame)
+        this._callbackId++;
+        this._callbacks[this._callbackId] = callback;
+        return this._callbackId;
+	}
+
+	cancelAnimationFrame(id) {
+        delete this._callbacks[id];
+	}
+
+	// called by XRDevice
+	_fireAnimationFrameCallbacks() {
+		const frame = this._createPresentationFrame()
+		if (this._nextFrameResolve) this._nextFrameResolve(frame)
+		const callbacks = this._callbacks
+		this._callbacks = {}
+        for (let i in callbacks) {
+            callbacks[i](frame)
+		}
+	}
+
+	/**
+	 * Request a frame of reference
+	 * 
+	 * @param {*} type 
+	 * @param {*} options 
+	 */
+	requestFrameOfReference(type, options) {
+		return this._device._requestFrameOfReference(type, options)
+	}
+
+	/*
+	 * Request an XRTracker, or reject if the requested tracker is not available
+	 * 
+	 * Currently, the only tracker type is: 
+	 * 'ARGON_vuforia' // only available in Argon browser
+	 * 
+	 * Potential future tracker types might include: 
+	 * 'image'
+	 * 'qrcode'
+	 * 'text'
+	 * 'object'
+	 * 'face'
+	 * 'body'
+	 */
+	requestTracker(type, options) {
+		return this.reality._requestTracker(type, options)
+	}
+
+	/**
+	 * Return a promise that resolves (at the next frame) to a list of XRHitTestResult instances, 
+	 * or null if the hit test fails
+	 * 
+	 * This is the recommended approach for performing one-off hit tests in response to user input
+	 */
+	requestHitTest(normalizedScreenX, normalizedScreenY) {
+		return this._reality._requestHitTest(normalizedScreenX, normalizedScreenY)
+	}
+
+	/**
+	 * Return a promise that resolves (at the next frame) to a new mid-air anchor at the current device pose
+	 */
+	requestMidAirAnchor(){
+		//DOMString? requestMidAirAnchor();
+		return this._onNextFrame().then((frame)=>{
+			return frame.createMidAirAnchor()
 		})
 	}
 
-	cancelFrame(handle){
-		return this._display._cancelAnimationFrame(handle)
-	}
-
 	end(){
-		if(this._ended) return
+		if (this._ended) return
 		this._ended = true
-		this._display._stop()
-		return new Promise((resolve, reject) => {
-			resolve()
+		return Promise.resolve().then(() => {
+			this.dispatchEvent(new CustomEvent('end'))
 		})
 	}
 
@@ -74,33 +129,24 @@ export default class XRSession extends EventHandlerBase {
 		return new XRPresentationFrame(this)
 	}
 
-	_getCoordinateSystem(...types){
-		for(let type of types){
-			switch(type){
-				case XRCoordinateSystem.HEAD_MODEL:
-					return this._display._headModelCoordinateSystem
-				case XRCoordinateSystem.EYE_LEVEL:
-					return this._display._eyeLevelCoordinateSystem
-				case XRCoordinateSystem.TRACKER:
-					return this._display._trackerCoordinateSystem
-				case XRCoordinateSystem.GEOSPATIAL:
-					// Not supported yet
-				default:
-					continue
-			}
+	_onNextFrame() {
+		if (!this._nextFramePromise) {
+			this._nextFramePromise = new Promise(resolve => {
+				this._nextFrameResolve = (frame) => {
+					this._nextFramePromise = null
+					this._nextFrameResolve = null
+					resolve(frame)
+				}
+			})
 		}
-		return null
+		return this._nextFramePromise
 	}
 
 	/*
 	attribute EventHandler onblur;
 	attribute EventHandler onfocus;
 	attribute EventHandler onresetpose;
-	attribute EventHandler onrealitychanged;
-	attribute EventHandler onrealityconnect;
-	attribute EventHandler onrealitydisconnect;
-	attribute EventHandler onboundschange;
-	attribute EventHandler onended;
+	attribute EventHandler onend;
 	*/
 }
 

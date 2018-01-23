@@ -1,4 +1,5 @@
 import EventHandlerBase from './fill/EventHandlerBase.js'
+import MatrixMath from './fill/MatrixMath.js'
 
 /*
 A Reality represents a view of the world, be it the real world via sensors or a virtual world that is rendered with WebGL or WebGPU.
@@ -11,6 +12,7 @@ export default class Reality extends EventHandlerBase {
 		this._isShared = isShared
 		this._isPassthrough = isPassthrough
 		this._anchors = new Map()
+		this._hitTestResults = new Map()
 	}
 
 	get name(){ return this._name }
@@ -19,9 +21,22 @@ export default class Reality extends EventHandlerBase {
 
 	get isPassthrough(){ return this._isPassthrough }
 
-	getCoordinateSystem(...types){
-		//XRCoordinateSystem? getCoordinateSystem(XRFrameOfReferenceType type, ...); // Tries the types in order, returning the first match or null if none is found
-		throw new Error('Not implemented')
+	/*
+	 * Request an XRTracker, or reject if the requested tracker is not available
+	 * 
+	 * Currently, the only tracker type is: 
+	 * 'ARGON_vuforia' // only available in Argon browser
+	 * 
+	 * Potential future tracker types might include: 
+	 * 'image'
+	 * 'qrcode'
+	 * 'text'
+	 * 'object'
+	 * 'face'
+	 * 'body'
+	 */
+	_requestTracker(type, options) {
+		return null
 	}
 
 	/*
@@ -39,43 +54,65 @@ export default class Reality extends EventHandlerBase {
 	}
 
 	/*
-	Called by a session before it hands a new XRPresentationFrame to the app
+	Called before animation frame callbacks are fired in the app
+	Anchors should be updated here
 	*/
-	_handleNewFrame(){}
+	_beforeAnimationFrame() {}
+
+	/*
+	Called after animation frame callbacks are fired in the app
+	*/
+	_afterAnimationFrame() {
+		for (const hitTestResult of this._hitTestResults) {
+			hitTestResult._transform = null
+		}
+		this._hitTestResults.clear()
+	}
 
 	/*
 	Create an anchor hung in space
 	*/
-	_addAnchor(anchor, display){
+	_addAnchor(anchor){
 		// returns DOMString anchor UID
 		throw new Error('Exending classes should implement _addAnchor')
 	}
 
-	/*
-	Create an anchor attached to a surface, as found by a ray
-	returns a Promise that resolves either to an AnchorOffset or null if the hit test failed
-	normalized screen x and y are in range 0..1, with 0,0 at top left and 1,1 at bottom right
-	*/
-	_findAnchor(normalizedScreenX, normalizedScreenY, display){
-		throw new Error('Exending classes should implement _findAnchor')
+	/**
+	 * Request an asyncronous hit test (for the next frame) using normalized screen coordinates.
+	 * Returns a promise that resolves to an array of XRHit objects, or null if the hit test failed.
+	 * 
+	 * Normalized screen x and y are in range 0..1, with 0,0 at top left and 1,1 at bottom right
+	 * 
+	 * @param {*} normalizedScreenX 
+	 * @param {*} normalizedScreenY 
+	 */
+	_requestHitTest(normalizedScreenX, normalizedScreenY){
+		throw new Error('Exending classes should implement _requestHitTest')
 	}
 
-	/*
-	Find an XRAnchorOffset that is at floor level below the current head pose
-	returns a Promise that resolves either to an AnchorOffset or null if the floor level is unknown
-	*/
-	_findFloorAnchor(display, uid=null){
-		// Copy the head model matrix for the current pose so we have it in the promise below
-		const headModelMatrix = new Float32Array(display._headPose.poseModelMatrix)
-		return new Promise((resolve, reject) => {
-			// For now, just create an anchor at origin level. Maybe in the future search for a surface?
-			headModelMatrix[13] = 0 // Set height to 0
-			const coordinateSystem = new XRCoordinateSystem(display, XRCoordinateSystem.TRACKER)
-			coordinateSystem._relativeMatrix = headModelMatrix
-			const anchor = new XRAnchor(coordinateSystem, uid)
-			this._addAnchor(anchor, display)
-			resolve(new XRAnchorOffset(anchor.uid))
+	/**
+	 * Perform an immediate (synchronous) hit test using normalized screen coordinates.
+	 * Returns an array of XRHit objects, or null if the hit test failed.
+	 * 
+	 * Normalized screen x and y are in range 0..1, with 0,0 at top left and 1,1 at bottom right
+	 * 
+	 * @param {*} normalizedScreenX 
+	 * @param {*} normalizedScreenY 
+	 */
+	_hitTest(normalizedScreenX, normalizedScreenY){
+		// default polyfill implementation (can be overriden):
+		// given screen coordinate C, starting at frame N
+		// - an async hit test request is made using screen coordiantes C for frame N + 1
+		//    -> frame N returns null (no hit test results)
+		// - if this method is called again with the same parameters C for frame N+1
+		//    -> the hit test result (which is now be available synchronously) is returned
+		const key = normalizedScreenX + ',' + normalizedScreenY
+
+		this._requestHitTest(normalizedScreenX,normalizedScreenX).then((results)=>{ // will resolve for next frame
+			this._hitTestResults.set(key, results)
 		})
+
+		return this._hitTestResults.get(key)
 	}
 
 	_getAnchor(uid){
@@ -85,10 +122,6 @@ export default class Reality extends EventHandlerBase {
 	_removeAnchor(uid){
 		// returns void
 		throw new Error('Exending classes should implement _removeAnchor')
-	}
-
-	_hitTestNoAnchor(normalizedScreenX, normalizedScreenY, display){
-		throw new Error('Exending classes should implement _hitTestNoAnchor')
 	}
 
 	_getLightAmbientIntensity(){

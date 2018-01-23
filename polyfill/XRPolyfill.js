@@ -1,4 +1,4 @@
-import XRDisplay from './XRDisplay.js'
+import XRDevice from './XRDevice.js'
 import XRSession from './XRSession.js'
 import XRSessionCreateParameters from './XRSessionCreateParameters.js'
 import Reality from './Reality.js'
@@ -6,22 +6,22 @@ import XRPointCloud from './XRPointCloud.js'
 import XRLightEstimate from './XRLightEstimate.js'
 import XRAnchor from './XRAnchor.js'
 import XRPlaneAnchor from './XRPlaneAnchor.js'
-import XRAnchorOffset from './XRAnchorOffset.js'
+import XRHit from './XRHit.js'
+import XRHitAnchor from './XRHitAnchor.js'
+import XRFrameOfReference from './XRFrameOfReference.js'
 import XRStageBounds from './XRStageBounds.js'
 import XRStageBoundsPoint from './XRStageBoundsPoint.js'
 import XRPresentationFrame from './XRPresentationFrame.js'
 import XRView from './XRView.js'
 import XRViewport from './XRViewport.js'
 import XRCoordinateSystem from './XRCoordinateSystem.js'
-import XRViewPose from './XRViewPose.js'
+import XRDevicePose from './XRDevicePose.js'
 import XRLayer from './XRLayer.js'
 import XRWebGLLayer from './XRWebGLLayer.js'
 
 import EventHandlerBase from './fill/EventHandlerBase.js'
-import FlatDisplay from './display/FlatDisplay.js'
-import HeadMountedDisplay from './display/HeadMountedDisplay.js'
-
-import CameraReality from './reality/CameraReality.js'
+import FlatDevice from './device/FlatDevice.js'
+import HeadMountedDevice from './device/HeadMountedDevice.js'
 
 /*
 XRPolyfill implements the window.XR functionality as a polyfill
@@ -32,7 +32,7 @@ so you can safely include this script in any page.
 class XRPolyfill extends EventHandlerBase {
 	constructor(){
 		super()
-		window.XRDisplay = XRDisplay
+		window.XRDevice = XRDevice
 		window.XRSession = XRSession
 		window.XRSessionCreateParameters = XRSessionCreateParameters
 		window.Reality = Reality
@@ -40,39 +40,18 @@ class XRPolyfill extends EventHandlerBase {
 		window.XRLightEstimate = XRLightEstimate
 		window.XRAnchor = XRAnchor
 		window.XRPlaneAnchor = XRPlaneAnchor
-		window.XRAnchorOffset = XRAnchorOffset
+		window.XRHit = XRHit
+		window.XRHitAnchor = XRHitAnchor
+		window.XRFrameOfReference = XRFrameOfReference
 		window.XRStageBounds = XRStageBounds
 		window.XRStageBoundsPoint = XRStageBoundsPoint
 		window.XRPresentationFrame = XRPresentationFrame
 		window.XRView = XRView
 		window.XRViewport = XRViewport
 		window.XRCoordinateSystem = XRCoordinateSystem
-		window.XRViewPose = XRViewPose
+		window.XRDevicePose = XRDevicePose
 		window.XRLayer = XRLayer
 		window.XRWebGLLayer = XRWebGLLayer
-
-		this._getVRDisplaysFinished = false;
-
-		// Reality instances that may be shared by multiple XRSessions
-		this._sharedRealities = [new CameraReality(this)]
-		this._privateRealities = []
-
-		this._displays = [new FlatDisplay(this, this._sharedRealities[0])]
-
-		if(typeof navigator.getVRDisplays === 'function'){
-			navigator.getVRDisplays().then(displays => {
-				for(let display of displays){
-					if(display === null) continue
-					if(display.capabilities.canPresent){
-						this._displays.push(new HeadMountedDisplay(this, this._sharedRealities[0], display))
-					}
-				}
-				this._getVRDisplaysFinished = true;
-			})
-		} else {
-			// if no WebVR, we don't need to wait
-			this._getVRDisplaysFinished = true;
-		}
 
 		// These elements are at the beginning of the body and absolutely positioned to fill the entire window
 		// Sessions and realities add their elements to these divs so that they are in the right render order
@@ -81,7 +60,7 @@ class XRPolyfill extends EventHandlerBase {
 		this._realityEls = document.createElement('div')
 		this._realityEls.setAttribute('class', 'webxr-realities')
 		for(let el of [this._sessionEls, this._realityEls]){
-			el.style.position = 'absolute'
+			el.style.position = 'fixed'
 			el.style.width = '100%'
 			el.style.height = '100%'
 		}
@@ -94,22 +73,42 @@ class XRPolyfill extends EventHandlerBase {
 		})
 	}
 
-	getDisplays(){
-		var self=this
-		var waitTillDisplaysChecked = function(resolve) {
-			if (!self._getVRDisplaysFinished) {
-				setTimeout(waitTillDisplaysChecked.bind(self, resolve), 30);
-			} else {
-				resolve(self._displays);
+	requestDevice(){
+		return Promise.resolve().then(()=>{
+			if(typeof navigator.getVRDisplays === 'function') {
+				return navigator.getVRDisplays().then(displays => {
+					let passThroughCameraDisplay = null
+					let presentableDisplay = null
+					let anyDisplay = null
+					for(let display of displays){
+						if (display === null) continue
+						if (display.capabilities.hasPassThroughCamera) {
+							passThroughCameraDisplay = display
+							continue
+						}
+						if (dipslay.capabilities.canPresent) {
+							presentableDisplay = display
+							continue
+						}
+						if (!anyDisplay) anyDisplay = display
+					}
+					return passThroughCameraDisplay || presentableDisplay || anyDisplay // preference order
+				})
 			}
-		}
-		return new Promise((resolve, reject) => {
-			waitTillDisplaysChecked(resolve);
+		}).then(vrDisplay => {
+			return HeadMountedDevice._requestDevice(this, vrDisplay).catch(()=>{
+				return FlatDevice._requestDevice(this, vrDisplay)
+			})
 		})
 	}
 
-	//attribute EventHandler ondisplayconnect;
-	//attribute EventHandler ondisplaydisconnect;
+	// For backwards compatability. TO BE REMOVED.
+	requestDisplays() {
+		console.warn('requestDisplays() is deprecated. Use requestDevice()')
+		this.requestDevice().then(device=>[device])
+	}
+
+	//attribute EventHandler ondevicechange;
 }
 
 /* Install XRPolyfill if window.XR does not exist */

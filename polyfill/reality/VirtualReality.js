@@ -23,7 +23,7 @@ export default class VirtualReality extends Reality {
 	/*
 	Called by a session before it hands a new XRPresentationFrame to the app
 	*/
-	_handleNewFrame(){}
+	_beforeAnimationFrame(){}
 
 	/*
 	Create an anchor hung in space
@@ -33,21 +33,15 @@ export default class VirtualReality extends Reality {
 		return anchor.uid
 	}
 
-	/*
-	Create an anchor attached to a surface, as found by a ray
-	normalized screen x and y are in range 0..1, with 0,0 at top left and 1,1 at bottom right
-	*/
-	_findAnchor(normalizedScreenX, normalizedScreenY, display){
-		return new Promise((resolve, reject) => {
-			resolve(null)
-		})
-	}
-
 	_removeAnchor(uid){
 		this._anchors.delete(uid)
 	}
 
-	_hitTestNoAnchor(normalizedScreenX, normalizedScreenY, display){
+	_requestHitTest(normalizedScreenX, normalizedScreenY){
+		return Promise.resolve(null)
+	}
+
+	_hitTest(normalizedScreenX, normalizedScreenY){
 		return null
 	}
 

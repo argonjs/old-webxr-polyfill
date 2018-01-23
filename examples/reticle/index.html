@@ -52,7 +52,6 @@
 			class HitTestExample extends XRExampleBase {
 				constructor(domElement){
 					super(domElement, false)
-					this._tapEventData = null // Will be filled in on touch start and used in updateScene
 
 					// A message at the bottom of the screen that shows whether a surface has been found
 					this._messageEl = document.createElement('div')
@@ -62,9 +61,6 @@
 					this._messageEl.style.left = '10px'
 					this._messageEl.style.color = 'white'
 					this._messageEl.style['font-size'] = '16px'
-
-					this._tapEventData = [ 0.5, 0.5 ]
-					this.el.addEventListener('touchstart', this._onTouchStart.bind(this), false)
 				}
 
 				// Called during construction to allow the app to populate this.scene
@@ -76,6 +72,7 @@
 					)
 					this.reticle.geometry.applyMatrix(new THREE.Matrix4().makeRotationX(THREE.Math.degToRad(-90)))
 					this.reticle.visible = false
+					this.reticle.matrixAutoUpdate = false
 					this.scene.add(this.reticle)
 
 					// Add a few lights
@@ -86,36 +83,17 @@
 				}
 
 				// Called once per frame, before render, to give the app a chance to update this.scene
-				updateScene(frame){
-						const x = this._tapEventData[0]
-						const y = this._tapEventData[1]
+				updateScene(frame, frameOfReference){
+					const hits = frame.hitTest(0.5,0.5);
 
-						const hit = frame.hitTestNoAnchor(x, y);
-
-						var model = new THREE.Matrix4();
-						var tempPos = new THREE.Vector3();
-						var tempQuat = new THREE.Quaternion();
-						var tempScale = new THREE.Vector3();
-						if (hit && hit.length > 0) {
-							this.reticle.visible = true
-							model.fromArray(hit[0].modelMatrix);
-							model.decompose(tempPos, tempQuat, tempScale);
-							this.reticle.position.copy(tempPos);
-							this.reticle.quaternion.copy(tempQuat);
-						}
-				}
-
-				// Save screen taps as normalized coordinates for use in this.updateScene
-				_onTouchStart(ev){
-					if (!ev.touches || ev.touches.length === 0) {
-						console.error('No touches on touch event', ev)
-						return
+					if (hits) {
+						const transform = hits[0].getTransformTo(frameOfReference)
+						this.reticle.matrix.fromArray(transform)
+						this.reticle.updateMatrixWorld()
+						this.reticle.visible = true
+					} else {
+						this.reticle.visible = false
 					}
-					//save screen coordinates normalized to -1..1 (0,0 is at center and 1,1 is at top right)
-					this._tapEventData = [
-						ev.touches[0].clientX / window.innerWidth,
-						ev.touches[0].clientY / window.innerHeight
-					]
 				}
 			}
 
