@@ -420,7 +420,7 @@ export default class ARKitWrapper extends EventHandlerBase {
 	}
 
 	static HasARKit(){
-		return typeof window.webkit !== 'undefined'
+		return typeof window.webkit !== 'undefined' && typeof window.webkit.messageHandlers.initAR !== 'undefined'
 	}
 
 	get deviceId(){ return this._deviceId } // The ARKit provided device ID

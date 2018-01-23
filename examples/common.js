@@ -21,12 +21,16 @@ class XRExampleBase {
 
 		this._boundHandleFrame = this._handleFrame.bind(this) // Useful for setting up the requestAnimationFrame callback
 
-		// Set during the XR.getDisplays call below
-		this.displays = null
+		// Set during the XR.requestDevice call below
+		this.device = null
 
 		// Set during this.startSession below		
-		this.display = null
 		this.session = null
+
+		// frames of reference
+		this.headModelFrameOfReference = null
+		this.stageFrameOfReference = null
+		this.eyeLevelFrameOfReference = null
 
 		this.scene = new THREE.Scene() // The scene will be rotated and oriented around the camera using the head pose
 
@@ -41,6 +45,10 @@ class XRExampleBase {
 			throw new Error('Could not create GL context')
 		}
 
+		window.onerror = (mes, src, lino, colno, err) => {
+			this.showMessage(mes + ' src:' + src + ' stack:' + new Error().stack)
+		}
+
 		// Set up the THREE renderer with the session's layer's glContext
 		this.renderer = new THREE.WebGLRenderer({
 			canvas: this.glCanvas,
@@ -52,50 +60,36 @@ class XRExampleBase {
 		this.renderer.autoClear = false
 		this.renderer.setClearColor('#000', 0)
 
-		this.requestedFloor = false
 		this.floorGroup = new THREE.Group() // This group will eventually be be anchored to the floor (see findFloorAnchor below)
 
-		// an array of info that we'll use in _handleFrame to update the nodes using anchors
-		this.anchoredNodes = [] // { XRAnchorOffset, Three.js Object3D }
-
-		// Give extending classes the opportunity to initially populate the scene
-		this.initializeScene()
+		// a map of XRCoordinateSystem instances and their Object3D proxies to be updated each frame
+		this.xrObjects = new Map // XRCoordinateSystem -> Three.js Object3D Map
 
 		if(typeof navigator.XR === 'undefined'){
 			this.showMessage('No WebXR API found, usually because the WebXR polyfill has not loaded')
 			return
 		}
 
-		// Get displays and then request a session
-		navigator.XR.getDisplays().then(displays => {
-			if(displays.length == 0) {
-				this.showMessage('No displays are available')
-				return
-			}
-			this.displays = displays
+		// Get device and then request a session
+		navigator.XR.requestDevice().then(device => {
+			this.device = device
 			this._startSession()
 		}).catch(err => {
-			console.error('Error getting XR displays', err)
-			this.showMessage('Could not get XR displays')
+			console.error('Error getting XR device', err)
+			this.showMessage('Could not get XR device')
 		})
 	}
 
 	_startSession(){
 		let sessionInitParamers = {
-			exclusive: this.createVirtualReality,
+			exclusive: true,
 			type: this.createVirtualReality ? XRSession.REALITY : XRSession.AUGMENTATION
 		}
-		for(let display of this.displays){
-			if(display.supportsSession(sessionInitParamers)){
-				this.display = display
-				break
-			}
-		}
-		if(this.display === null){
-			this.showMessage('Could not find a display for this type of session')
+		if(!this.device.supportsSession(sessionInitParamers)){
+			this.showMessage(`Device does not support the session parameters: ${JSON.stringify(sessionInitParamers)}`)
 			return
 		}
-		this.display.requestSession(sessionInitParamers).then(session => {
+		return this.device.requestSession(sessionInitParamers).then(session => {
 			this.session = session
 			this.session.depthNear = 0.1
 			this.session.depthFar = 1000.0
@@ -105,10 +99,30 @@ class XRExampleBase {
 			this.session.addEventListener('blur', ev => { this.handleSessionBlur(ev) })
 			this.session.addEventListener('end', ev => { this.handleSessionEnded(ev) })
 
-			if(this.shouldStartPresenting){
-				// VR Displays need startPresenting called due to input events like a click
-				this.startPresenting()
-			}
+			const r1 = this.session.requestFrameOfReference('stage').then((frame) => {
+				this.stageFrameOfReference = frame
+				const stageObject = this.getXRObject3D(frame)
+				stageObject.add(this.floorGroup)
+			})
+
+			const r2 = this.session.requestFrameOfReference('eyeLevel').then((frame)=>{
+				this.eyeLevelFrameOfReference = frame
+			})
+
+			const r3 = this.session.requestFrameOfReference('headModel').then((frame)=>{
+				this.headModelFrameOfReference = frame
+			})
+
+			return [r1,r2,r3]
+		}).then((requestedFrames)=>{
+			return Promise.all(requestedFrames.map(framePromise => framePromise.catch(e => e))).then(()=>{
+				if(this.shouldStartPresenting){
+					// Give extending classes the opportunity to initially populate the scene
+					this.initializeScene()
+					// VR Displays need startPresenting called due to input events like a click
+					this.startPresenting()
+				}
+			})
 		}).catch(err => {
 			console.error('Error requesting session', err)
 			this.showMessage('Could not initiate the session')
@@ -124,6 +138,7 @@ class XRExampleBase {
 			var message = messages[0]
 		} else {
 			var message = document.createElement('div')
+			message.style.color = 'green'
 			message.setAttribute('class', 'common-message')
 			this.el.append(message)
 		}
@@ -150,7 +165,7 @@ class XRExampleBase {
 		this.session.baseLayer.addEventListener('focus', ev => { this.handleLayerFocus(ev) })
 		this.session.baseLayer.addEventListener('blur', ev => { this.handleLayerBlur(ev) })
 
-		this.session.requestFrame(this._boundHandleFrame)
+		this.session.requestAnimationFrame(this._boundHandleFrame)
 	}
 
 	// Extending classes can react to these events
@@ -168,33 +183,46 @@ class XRExampleBase {
 	/*
 	Extending classes that need to update the layer during each frame should override this method
 	*/
-	updateScene(frame){}
+	updateScene(frame, frameOfReference){}
 
 	_handleFrame(frame){
-		const nextFrameRequest = this.session.requestFrame(this._boundHandleFrame)
-		const headPose = frame.getDisplayPose(frame.getCoordinateSystem(XRCoordinateSystem.HEAD_MODEL))
+		const nextFrameRequest = this.session.requestAnimationFrame(this._boundHandleFrame)
 
-		// If we haven't already, request the floor anchor offset
-		if(this.requestedFloor === false){
-			this.requestedFloor = true
-			frame.findFloorAnchor('first-floor-anchor').then(anchorOffset => {
-				if(anchorOffset === null){
-					console.error('could not find the floor anchor')
-					return
-				}
-				this.addAnchoredNode(anchorOffset, this.floorGroup)
-			}).catch(err => {
-				console.error('error finding the floor anchor', err)
-			})
+		let targetFrameOfReference = null
+		let devicePose = null
+
+		if (this.stageFrameOfReference) {
+			targetFrameOfReference = this.stageFrameOfReference
+			devicePose = frame.getDevicePose(targetFrameOfReference)
 		}
 
-		// Update anchored node positions in the scene graph
-		for(let anchoredNode of this.anchoredNodes){
-			this.updateNodeFromAnchorOffset(frame, anchoredNode.node, anchoredNode.anchorOffset)
+		if (!devicePose && this.eyeLevelFrameOfReference) {
+			targetFrameOfReference = this.eyeLevelFrameOfReference
+			devicePose = frame.getDevicePose(targetFrameOfReference)
+		}
+				
+		if (!devicePose && this.headModelFrameOfReference) {
+			targetFrameOfReference = this.headModelFrameOfReference
+			devicePose = frame.getDevicePose(targetFrameOfReference)
+		}
+
+		if (!devicePose) return // nothing to do
+
+		// Update xr objects in the scene graph
+		for (let xrObject of this.xrObjects.values()) {
+			const transform = xrObject.xrCoordinateSystem.getTransformTo(targetFrameOfReference)
+			if (transform) {
+				xrObject.matrixAutoUpdate = false
+				xrObject.matrix.fromArray(transform)
+				xrObject.updateMatrixWorld(true)
+				if (xrObject.parent !== this.scene) this.scene.add(xrObject)
+			} else {
+				this.scene.remove(xrObject)
+			}
 		}
 
 		// Let the extending class update the scene before each render
-		this.updateScene(frame)
+		this.updateScene(frame, targetFrameOfReference)
 
 		// Prep THREE.js for the render of each XRView
 		this.renderer.autoClear = false
@@ -202,12 +230,13 @@ class XRExampleBase {
 		this.renderer.clear()
 
 		this.camera.matrixAutoUpdate = false
-		this.camera.matrix.fromArray(headPose.poseModelMatrix)
+		this.camera.matrix.fromArray(devicePose.poseModelMatrix)
 		this.camera.updateMatrixWorld()
 		// Render each view into this.session.baseLayer.context
 		for(const view of frame.views){
 			// Each XRView has its own projection matrix, so set the camera to use that
-			this.camera.matrixWorldInverse.fromArray(view.viewMatrix)
+			const viewMatrix = devicePose.getViewMatrix(view)
+			this.camera.matrixWorldInverse.fromArray(viewMatrix)
 			this.camera.projectionMatrix.fromArray(view.projectionMatrix)
 
 			// Set up the renderer to the XRView's viewport and then render
@@ -225,7 +254,7 @@ class XRExampleBase {
 		// 	this.camera.matrixWorldInverse.fromArray(view.viewMatrix)
 		// 	this.camera.matrixWorld.fromArray(this.camera.matrixWorldInverse)
 		// 	this.camera.projectionMatrix.fromArray(view.projectionMatrix)
-		// 	this.camera.matrix.fromArray(headPose.poseModelMatrix)
+		// 	this.camera.matrix.fromArray(devicePose.poseModelMatrix)
 		// 	this.camera.updateMatrixWorld(true)
 
 		// 	// Set up the renderer to the XRView's viewport and then render
@@ -241,28 +270,22 @@ class XRExampleBase {
 	}
 
 	/*
-	Add a node to the scene and keep its pose updated using the anchorOffset
+	Get an Object3D representing the given XRCoordinateSystem
 	*/
-	addAnchoredNode(anchorOffset, node){
-		this.anchoredNodes.push({
-			anchorOffset: anchorOffset,
-			node: node
-		})
-		this.scene.add(node)
+	getXRObject3D(xrCoordinateSystem) {
+		let xrObject = this.xrObjects.get(xrCoordinateSystem)
+		if (xrObject) return xrObject
+
+		xrObject = new THREE.Object3D()
+		xrObject.xrCoordinateSystem = xrCoordinateSystem
+		this.xrObjects.set(xrCoordinateSystem, xrObject)
+		return xrObject
 	}
 
 	/*
-	Get the anchor data from the frame and use it and the anchor offset to update the pose of the node, this must be an Object3D
+	Update an Object3D coorresponding to an XRCoordinateSystem by positioning it relative to the target XRCOordinateSystem
 	*/
-	updateNodeFromAnchorOffset(frame, node, anchorOffset){
-		const anchor = frame.getAnchor(anchorOffset.anchorUID)
-		if(anchor === null){
-			throttledConsoleLog('Unknown anchor uid', anchorOffset.anchorUID)
-			return
-		}
-		node.matrixAutoUpdate = false
-		node.matrix.fromArray(anchorOffset.getOffsetTransform(anchor.coordinateSystem))
-		node.updateMatrixWorld(true)
+	_updateXRObject3D(xrObject, targetXRCoordinateSystem) {
 	}
 }
 
@@ -272,7 +295,6 @@ If you want to just put virtual things on surfaces, extend this app and override
 class ThingsOnSurfacesApp extends XRExampleBase {
 	constructor(domElement){
 		super(domElement, false)
-		this._tapEventData = null // Will be filled in on touch start and used in updateScene
 		this.el.addEventListener('touchstart', this._onTouchStart.bind(this), false)
 	}
 
@@ -289,25 +311,7 @@ class ThingsOnSurfacesApp extends XRExampleBase {
 
 
 	// Called once per frame, before render, to give the app a chance to update this.scene
-	updateScene(frame){
-		// If we have tap data, attempt a hit test for a surface
-		if(this._tapEventData !== null){
-			const x = this._tapEventData[0]
-			const y = this._tapEventData[1]
-			this._tapEventData = null
-			// Attempt a hit test using the normalized screen coordinates
-			frame.findAnchor(x, y).then(anchorOffset => {
-				if(anchorOffset === null){
-					console.log('miss')
-					return
-				}
-				console.log('hit', anchorOffset)
-				this.addAnchoredNode(anchorOffset, this.createSceneGraphNode())
-			}).catch(err => {
-				console.error('Error in hit test', err)
-			})
-		}
-	}
+	updateScene(frame, frameOfReference){}
 
 	// Save screen taps as normalized coordinates for use in this.updateScene
 	_onTouchStart(ev){
@@ -316,10 +320,14 @@ class ThingsOnSurfacesApp extends XRExampleBase {
 			return
 		}
 		//save screen coordinates normalized to -1..1 (0,0 is at center and 1,1 is at top right)
-		this._tapEventData = [
-			ev.touches[0].clientX / window.innerWidth,
-			ev.touches[0].clientY / window.innerHeight
-		]
+		const normalizedX = ev.touches[0].clientX / window.innerWidth
+		const normalizedY = ev.touches[0].clientY / window.innerHeight
+
+		this.session.requestHitTest(normalizedX, normalizedY).then((hits)=>{
+			if (!hits) return
+			const xrObject3D = this.getXRObject3D(hits[0].createAnchor())
+			xrObject3D.add(this.createSceneGraphNode())
+		})
 	}
 }
 

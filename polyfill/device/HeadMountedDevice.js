@@ -1,7 +1,7 @@
-import XRDisplay from '../XRDisplay.js'
+import XRDevice from '../XRDevice.js'
 import XRView from '../XRView.js'
 import XRSession from '../XRSession.js'
-import XRViewPose from '../XRViewPose.js'
+import XRFieldOfView from '../XRFieldOfView.js'
 
 import MatrixMath from '../fill/MatrixMath.js'
 import Quaternion from '../fill/Quaternion.js'
@@ -9,25 +9,42 @@ import Vector3 from '../fill/Vector3.js'
 
 import DeviceOrientationTracker from '../fill/DeviceOrientationTracker.js'
 import ARKitWrapper from '../platform/ARKitWrapper.js'
+import XRDevicePose from '../XRDevicePose.js';
 
 /*
-HeadMountedDisplay wraps a WebVR 1.1 display, like a Vive, Rift, or Daydream.
+HeadMountedDevice wraps a WebVR 1.1 display, like a Vive, Rift, or Daydream.
 */
-export default class HeadMountedDisplay extends XRDisplay {
-	constructor(xr, reality, vrDisplay){
-		super(xr, vrDisplay.displayName, vrDisplay.capabilities.hasExternalDisplay, reality)
+export default class HeadMountedDevice extends XRDevice {
+
+	static _requestDevice(xr, vrDisplay) {
+		return Promise.resolve().then(()=>{
+			if (!vrDisplay || !vrDisplay.capabilities.canPresent) 
+				throw new Error('HeadMountedDevice is not available')
+			return new HeadMountedDevice(xr, vrDisplay)
+		})
+	}
+
+	constructor(xr, vrDisplay){
+		super(xr, vrDisplay.capabilities.hasExternalDisplay)
 		this._vrDisplay = vrDisplay
 		this._vrFrameData = new VRFrameData()
 
 		// The view projection matrices will be reset using VRFrameData during this._handleNewFrame
-		this._leftView = new XRView(this._fov, this._depthNear, this._depthFar, XRView.LEFT)
-		this._rightView = new XRView(this._fov, this._depthNear, this._depthFar, XRView.RIGHT)
+		const fov = 50/2;
+		const fovs = new XRFieldOfView(fov, fov, fov, fov)
+		const depthNear = 0.1
+		const depthFar = 1000
+		this._leftView = new XRView(fovs, depthNear, depthFar, XRView.LEFT)
+		this._rightView = new XRView(fovs, depthNear, depthFar, XRView.RIGHT)
 		this._views = [this._leftView, this._rightView]
 
 		// These will be used to set the head and eye level poses during this._handleNewFrame
 		this._deviceOrientation = new Quaternion()
 		this._devicePosition = new Vector3()
-		this._deviceWorldMatrix = new Float32Array(16)
+		
+		this._IDENTITY = MatrixMath.mat4_generateIdentity()
+		this.__workingMatrix = new Float32Array(16)
+
 	}
 
 	/*
@@ -46,6 +63,10 @@ export default class HeadMountedDisplay extends XRDisplay {
 	This is where the VRDisplay is used to create a session 
 	*/
 	_handleNewBaseLayer(baseLayer){
+		if (!baseLayer) {
+			if (this._vrDisplay.isPresenting) this._vrDisplay.exitPresent()
+		}
+
 		this._vrDisplay.requestPresent([{
 			source: baseLayer._context.canvas
 		}]).then(() => {
@@ -68,20 +89,22 @@ export default class HeadMountedDisplay extends XRDisplay {
 		// TODO figure out how to stop ARKit and ARCore so that CameraReality can still work
 		if(this.running === false) return
 		this.running = false
-		this._reality._stop()
 	}
 
 	/*
-	Called by a session before it hands a new XRPresentationFrame to the app
+	Called before animation frame callbacks are fired in the app
 	*/
-	_handleNewFrame(frame){
-		if(this._vrDisplay.isPresenting){
+	_beforeAnimationFrame(){
+		if (this._vrDisplay.isPresenting){
 			this._updateFromVRFrameData()
 		}
 	}
 
-	_handleAfterFrame(frame){
-		if(this._vrDisplay.isPresenting){
+	/*
+	Called after animation frame callbacks are fired in the app
+	*/
+	_afterAnimationFrame(){
+		if (this._vrDisplay.isPresenting){
 			this._vrDisplay.submitFrame()
 		}
 	}
@@ -103,12 +126,20 @@ export default class HeadMountedDisplay extends XRDisplay {
 			if(this._vrFrameData.pose.position){
 				this._devicePosition.set(...this._vrFrameData.pose.position)
 			}
-			MatrixMath.mat4_fromRotationTranslation(this._deviceWorldMatrix, this._deviceOrientation.toArray(), this._devicePosition.toArray())
+			const deviceWorldMatrix = MatrixMath.mat4_fromRotationTranslation(this.__workingMatrix, this._deviceOrientation.toArray(), this._devicePosition.toArray())
 			if(this._vrDisplay.stageParameters && this._vrDisplay.stageParameters.sittingToStandingTransform){
-				MatrixMath.mat4_multiply(this._deviceWorldMatrix, this._vrDisplay.stageParameters.sittingToStandingTransform, this._deviceWorldMatrix)
-			}
-			this._headPose._setPoseModelMatrix(this._deviceWorldMatrix)
-			this._eyeLevelPose.position = this._devicePosition.toArray()
+				const sittingToStandingTransform = this._vrDisplay.stageParameters.sittingToStandingTransform
+				this._pose._transform = MatrixMath.mat4_multiply(deviceWorldMatrix, sittingToStandingTransform, deviceWorldMatrix)
+				this._eyeLevelFrameOfReference._transform = MatrixMath.mat4_invert(this.__workingMatrix, sittingToStandingTransform)				
+				this._stageFrameOfReference._transform = this._IDENTITY
+			} else {
+				this._pose._transform = deviceWorldMatrix
+				this._eyeLevelFrameOfReference._transform = this._IDENTITY	
+				// stage pose is emulated	
+				const stagePosition = [0,-XRDevicePose.SITTING_EYE_HEIGHT, 0]
+				this._stageFrameOfReference._position = stagePosition
+				this._stageFrameOfReference._emulatedHeight = XRDevicePose.SITTING_EYE_HEIGHT
+			}			
 		}
 	}
 }

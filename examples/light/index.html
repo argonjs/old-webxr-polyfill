@@ -76,6 +76,7 @@
 					)
 					this.reticle.geometry.applyMatrix(new THREE.Matrix4().makeRotationX(THREE.Math.degToRad(-90)))
 					this.reticle.visible = false
+					this.reticle.matrixAutoUpdate = false
 					this.scene.add(this.reticle)
 
 					// Add a few lights
@@ -87,25 +88,22 @@
 				}
 
 				// Called once per frame, before render, to give the app a chance to update this.scene
-				updateScene(frame){
-						const x = this._tapEventData[0]
-						const y = this._tapEventData[1]
-
-						const hit = frame.hitTestNoAnchor(x, y);
+				updateScene(frame, frameOfReference){
 						if(frame.hasLightEstimate){
 							this.ambientLight.intensity = frame.lightEstimate;
 							this.directionalLight.intensity = frame.lightEstimate * 0.5;
 						}
-						var model = new THREE.Matrix4();
-						var tempPos = new THREE.Vector3();
-						var tempQuat = new THREE.Quaternion();
-						var tempScale = new THREE.Vector3();
-						if (hit && hit.length > 0) {
+
+						const x = this._tapEventData[0]
+						const y = this._tapEventData[1]
+						const hits = frame.hitTest(x, y);
+						if (hits) {
+							const transform = hits[0].getTransformTo(frameOfReference)
+							this.reticle.matrix.fromArray(transform)
+							this.reticle.updateMatrixWorld()
 							this.reticle.visible = true
-							model.fromArray(hit[0].modelMatrix);
-							model.decompose(tempPos, tempQuat, tempScale);
-							this.reticle.position.copy(tempPos);
-							this.reticle.quaternion.copy(tempQuat);
+						} else {
+							this.reticle.visible = false
 						}
 				}
 

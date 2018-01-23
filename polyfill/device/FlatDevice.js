@@ -1,6 +1,8 @@
-import XRDisplay from '../XRDisplay.js'
+import XRDevice from '../XRDevice.js'
+import XRDevicePose from '../XRDevicePose.js'
 import XRView from '../XRView.js'
 import XRSession from '../XRSession.js'
+import XRFieldOfView from '../XRFieldOfView.js'
 
 import MatrixMath from '../fill/MatrixMath.js'
 import Quaternion from '../fill/Quaternion.js'
@@ -8,23 +10,35 @@ import Vector3 from '../fill/Vector3.js'
 
 import DeviceOrientationTracker from '../fill/DeviceOrientationTracker.js'
 import ARKitWrapper from '../platform/ARKitWrapper.js'
+import ArgonWrapper from '../platform/ArgonWrapper.js'
 
 /*
-FlatDisplay takes over a handset's full screen and presents a moving view into a Reality, as if it were a magic window.
+FlatDevice takes over a handset's full screen and presents a moving view into a Reality, as if it were a magic window.
 
-If ARKit is present, it uses the ARKit updates to set the headModel pose.
-If ARCore is available on the VRDisplays, use that to pose the headModel. (TODO)
+If ARKit is present, it uses the ARKit updates to set the device pose.
+If ARCore is available on the VRDisplays, use that to set the device pose.
+If Argon is avialable, use that to set the device pose
 Otherwise, use orientation events.
 */
-export default class FlatDisplay extends XRDisplay {
-	constructor(xr, reality){
-		super(xr, 'Flat', false, reality)
+export default class FlatDevice extends XRDevice {
+
+	static _requestDevice(xr, vrDisplay) {
+		// TODO: reject on devices without device orientation or any other tracking api ?
+		// vrDisplay can be null if none is available
+		return Promise.resolve(new FlatDevice(xr, vrDisplay))
+	}
+
+	constructor(xr, vrDisplay){
+		super(xr, vrDisplay)
 
 		this._started = false
 		this._initialized = false
 
 		// This is used if we have ARKit support
 		this._arKitWrapper = null
+
+		// This is used if we have Argon support
+		this._argonWrapper = null
 
 		// This is used if we have ARCore support
 		this._vrFrameData = null
@@ -38,15 +52,30 @@ export default class FlatDisplay extends XRDisplay {
 		this._deviceWorldMatrix = null			// Float32Array(16)
 
 		// Currently only support full screen views
-		this._views.push(new XRView(this._fov, this._depthNear, this._depthFar))
+		const fov = 50/2;
+		const fovs = new XRFieldOfView(fov, fov, fov, fov)
+		const depthNear = 0.1
+		const depthFar = 1000
+		this._views.push(new XRView(fovs, depthNear, depthFar))
+
+		this.__workingMatrix = new Float32Array(16)
+		this.__IDENTITY = MatrixMath.mat4_generateIdentity()
+
+		this._onWindowResize = () => {
+			if (this.baseLayer && this._arKitWrapper === null) {
+				this.baseLayer.framebufferWidth = this.baseLayer.context.canvas.clientWidth;
+				this.baseLayer.framebufferHeight = this.baseLayer.context.canvas.clientHeight;
+			}
+		}
 	}
 
 	_start(){
-		if(this._reality._vrDisplay){ // Use ARCore
+		if (this.running) return
+		if(this._vrDisplay){ // Use ARCore
 			if(this._vrFrameData === null){
 				this._vrFrameData = new VRFrameData()
-				this._views[0]._depthNear = this._reality._vrDisplay.depthNear
-				this._views[0]._depthFar = this._reality._vrDisplay.depthFar
+				this._views[0]._depthNear = this._vrDisplay.depthNear
+				this._views[0]._depthFar = this._vrDisplay.depthFar
 				this._deviceOrientation = new Quaternion()
 				this._devicePosition = new Vector3()
 				this._deviceWorldMatrix = new Float32Array(16)
@@ -66,88 +95,128 @@ export default class FlatDisplay extends XRDisplay {
 			} else {
 				this._arKitWrapper.watch()
 			}
+		} else if (ArgonWrapper.HasArgon()) { // Use Argon 
+			if (this._initialized === false) {
+				this._initialized = true;
+				this._argonWrapper = ArgonWrapper.GetOrCreate();
+			}
 		} else { // Use device orientation
 			if(this._initialized === false){
 				this._initialized = true
+				this._eyeLevelFrameOfReference = null // not available
 				this._deviceOrientation = new Quaternion()
 				this._devicePosition = new Vector3()
 				this._deviceWorldMatrix = new Float32Array(16)
 				this._deviceOrientationTracker = new DeviceOrientationTracker()
 				this._deviceOrientationTracker.addEventListener(DeviceOrientationTracker.ORIENTATION_UPDATE_EVENT, this._updateFromDeviceOrientationTracker.bind(this))
+				this._stageFrameOfReference._position = [0, -XRDevicePose.SITTING_EYE_HEIGHT, 0]
+				this._stageFrameOfReference._emulatedHeight = XRDevicePose.SITTING_EYE_HEIGHT
 			}
 		}
+		window.addEventListener('resize', this._onWindowResize, false)	
 		this.running = true
-		this._reality._start()
 	}
 
 	_stop(){
+		if(this.running === false) return			
 		// TODO figure out how to stop ARKit and ARCore so that CameraReality can still work
-		if(this.running === false) return
+		window.removeEventListener('resize', this._onWindowResize)
 		this.running = false
-		this._reality._stop()
 	}
 
 	/*
 	Called by a session to indicate that its baseLayer attribute has been set.
-	FlatDisplay just adds the layer's canvas to DOM elements created by the XR polyfill
+	FlatDevice just adds the layer's canvas to DOM elements created by the XR polyfill
 	*/
 	_handleNewBaseLayer(baseLayer){
+		if (this.baseLayer) {
+			this.__workingMatrix._sessionEls.removeChild(this.baseLayer.context.canvas)
+		}
+
 		this.baseLayer = baseLayer;
 		baseLayer._context.canvas.style.width = "100%";
 		baseLayer._context.canvas.style.height = "100%";
 		baseLayer.framebufferWidth = this._xr._sessionEls.clientWidth;
 		baseLayer.framebufferHeight = this._xr._sessionEls.clientHeight;
 
-		if (this._arKitWrapper === null) {
-			// TODO:  Need to remove this listener if a new base layer is set
-			window.addEventListener('resize', () => {
-				baseLayer.framebufferWidth = baseLayer._context.canvas.clientWidth;
-				baseLayer.framebufferHeight = baseLayer._context.canvas.clientHeight;
-			}, false)	
-		}
-
-		this._xr._sessionEls.appendChild(baseLayer._context.canvas)
+		this._xr._sessionEls.appendChild(baseLayer.context.canvas)
 	}
 
 	/*
-	Called by a session before it hands a new XRPresentationFrame to the app
+	Called after animation frame callbacks are fired in the app
 	*/
-	_handleNewFrame(frame){
+	_beforeAnimationFrame(){
 		if(this._vrFrameData !== null){
 			this._updateFromVRDevice()
 		}
+
+		if (this._argonWrapper !== null) {
+			this._views[0].setProjectionMatrix(this._argonWrapper.frameState.subviews[0].projectionMatrix)
+			this._pose._transform = this._argonWrapper.getEntityTransformRelativeToOrigin('ar.device.user')
+			this._eyeLevelFrameOfReference._transform = this._argonWrapper.getEntityTransformRelativeToOrigin('xr.eyeLevel') || this.__IDENTITY
+			this._stageFrameOfReference._transform = this._argonWrapper.getEntityTransformRelativeToOrigin('ar.device.stage')
+		} 
 	}
 
+	_requestAnimationFrame(callback){
+		if (this._argonWrapper !== null) {
+			return this._argonWrapper.requestAnimationFrame(callback)
+		} else {
+			return super._requestAnimationFrame(callback);
+		}
+	}
+
+	_cancelAnimationFrame(handle){
+		if (this._argonWrapper !== null) {
+			return this._argonWrapper.cancelAnimationFrame(callback)
+		} else {
+			return super._cancelAnimationFrame(callback);	
+		}
+	}
+
+
 	_updateFromVRDevice(){
-		this._reality._vrDisplay.getFrameData(this._vrFrameData)
+		this._vrDisplay.getFrameData(this._vrFrameData)
 		this._views[0].setProjectionMatrix(this._vrFrameData.leftProjectionMatrix)
 		this._deviceOrientation.set(...this._vrFrameData.pose.orientation)
 		this._devicePosition.set(...this._vrFrameData.pose.position)
-		this._devicePosition.add(0, XRViewPose.SITTING_EYE_HEIGHT, 0)
 		MatrixMath.mat4_fromRotationTranslation(this._deviceWorldMatrix, this._deviceOrientation.toArray(), this._devicePosition.toArray())
-		this._headPose._setPoseModelMatrix(this._deviceWorldMatrix)
-		this._eyeLevelPose._position = this._devicePosition.toArray()
+		
+		this._pose._transform = this._deviceWorldMatrix
+		this._eyeLevelFrameOfReference._transform = this._vrDisplay.capabilities.hasPosition ? this.__IDENTITY : null
+
+		// stage position is emulated
+		this._stageFrameOfReference._position = [0,-XRDevicePose.SITTING_EYE_HEIGHT, 0]
+		this._stageFrameOfReference._emulatedHeight = XRDevicePose.SITTING_EYE_HEIGHT
 	}
 
 	_updateFromDeviceOrientationTracker(){
 		// TODO set XRView's FOV
 		this._deviceOrientationTracker.getOrientation(this._deviceOrientation)
-		this._devicePosition.set(this._headPose.poseModelMatrix[12], this._headPose.poseModelMatrix[13], this._headPose.poseModelMatrix[14])
-		this._devicePosition.add(0, XRViewPose.SITTING_EYE_HEIGHT, 0)
 		MatrixMath.mat4_fromRotationTranslation(this._deviceWorldMatrix, this._deviceOrientation.toArray(), this._devicePosition.toArray())
-		this._headPose._setPoseModelMatrix(this._deviceWorldMatrix)
-		this._eyeLevelPose._position = this._devicePosition.toArray()
+		
+		this._pose._transform = this._deviceWorldMatrix
+		// eye level frame of reference not supported
+		
+		// stage pose is emulated
+		this._stageFrameOfReference._position = [0,-XRDevicePose.SITTING_EYE_HEIGHT, 0]
+		this._stageFrameOfReference._emulatedHeight = XRDevicePose.SITTING_EYE_HEIGHT
 	}
 
 	_handleARKitUpdate(...params){
 		const cameraTransformMatrix = this._arKitWrapper.getData('camera_transform')
 		if (cameraTransformMatrix) {
-			this._headPose._setPoseModelMatrix(cameraTransformMatrix)
-			this._headPose._poseModelMatrix[13] += XRViewPose.SITTING_EYE_HEIGHT
-			this._eyeLevelPose._position = this._headPose._position
+			this._pose._transform = cameraTransformMatrix
+			this._eyeLevelFrameOfReference._transform = this.__IDENTITY
 		} else {
 			console.log('no camera transform', this._arKitWrapper.rawARData)
+			this._eyeLevelFrameOfReference._transform = null // eyeLevelPose does not get emulated
 		}
+
+		// stage pose is emulated for now
+		// TODO: use hit tests to determine actual floor offset
+		this._stageFrameOfReference._position = [0,-XRDevicePose.SITTING_EYE_HEIGHT, 0]
+		this._stageFrameOfReference._emulatedHeight = XRDevicePose.SITTING_EYE_HEIGHT
 
 		const cameraProjectionMatrix = this._arKitWrapper.getData('projection_camera')
 		if(cameraProjectionMatrix){
@@ -195,9 +264,5 @@ export default class FlatDisplay extends XRDisplay {
 		return super._createSession(parameters)
 	}
 
-	_supportedCreationParameters(parameters){
-		return parameters.type === XRSession.AUGMENTATION && parameters.exclusive === false		
-	}
-
-	//attribute EventHandler ondeactivate; // FlatDisplay never deactivates
+	//attribute EventHandler ondeactivate; // FlatDevice never deactivates
 }

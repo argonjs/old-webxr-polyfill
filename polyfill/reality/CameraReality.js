@@ -1,8 +1,5 @@
 import Reality from '../Reality.js'
 import XRAnchor from '../XRAnchor.js'
-import XRViewPose from '../XRViewPose.js'
-
-import XRAnchorOffset from '../XRAnchorOffset.js'
 
 import XRLightEstimate from '../XRLightEstimate.js'
 
@@ -10,7 +7,12 @@ import MatrixMath from '../fill/MatrixMath.js'
 import Quaternion from '../fill/Quaternion.js'
 
 import ARKitWrapper from '../platform/ARKitWrapper.js'
+import ArgonWrapper from '../platform/ArgonWrapper.js'
 import ARCoreCameraRenderer from '../platform/ARCoreCameraRenderer.js'
+import XRCoordinateSystem from '../XRCoordinateSystem.js';
+import XRHit from '../XRHit.js';
+
+import ArgonVuforiaTracker from '../tracker/ArgonVuforiaTracker.js'
 
 /*
 CameraReality displays the forward facing camera.
@@ -20,50 +22,49 @@ If this is running in the Google ARCore Chrome application, it will create a can
 If there is no ARKit or ARCore available, it will use WebRTC's MediaStream to render camera data into a canvas.
 */
 export default class CameraReality extends Reality {
-	constructor(xr){
+
+	static supportsVRDisplay(vrDisplay) {
+		return vrDisplay.capabilities.hasPassThroughCamera // This is the ARCore extension to WebVR 1.1
+	}
+
+	constructor(xr, device){
 		super(xr, 'Camera', true, true)
 
 		this._initialized = false
 		this._running = false
+		this._device = device
+		this._lightEstimate = new XRLightEstimate();
 
-		// These are used if we have access to ARKit
+		// This is used if we have access to ARKit 
 		this._arKitWrapper = null
+
+		// This is used if we have access to Argon
+		this._argonWrapper = null
 
 		// These are used if we do not have access to ARKit
 		this._mediaStream = null
 		this._videoEl = null
 
 		// These are used if we're using the Google ARCore web app
+		this._vrDisplay = null
 		this._arCoreCameraRenderer = null
 		this._arCoreCanvas = null
 		this._elContext = null
-		this._vrDisplay = null
-		this._vrFrameData = null
 
-		this._lightEstimate = new XRLightEstimate();
-
-		// Try to find a WebVR 1.1 display that supports Google's ARCore extensions
-		if(typeof navigator.getVRDisplays === 'function'){
-			navigator.getVRDisplays().then(displays => {
-				for(let display of displays){
-					if(display === null) continue
-					if(display.capabilities.hasPassThroughCamera){ // This is the ARCore extension to WebVR 1.1
-						this._vrDisplay = display
-						this._vrFrameData = new VRFrameData()
-						if (!window.WebARonARKitSetData) {							
-							this._arCoreCanvas = document.createElement('canvas')
-							this._xr._realityEls.appendChild(this._arCoreCanvas)
-							this._arCoreCanvas.width = window.innerWidth
-							this._arCoreCanvas.height = window.innerHeight
-							this._elContext = this._arCoreCanvas.getContext('webgl')
-							if(this._elContext === null){
-								throw 'Could not create CameraReality GL context'
-							}
-						}
-						break
-					}
+		if (device._vrDisplay) {
+			if (!CameraReality.supportsVRDisplay(device._vrDisplay))
+				throw new Error('CameraReality is not supported on current device')
+			this._vrDisplay =  device._vrDisplay
+			if (!window.WebARonARKitSetData) {							
+				this._arCoreCanvas = document.createElement('canvas')
+				this._xr._realityEls.appendChild(this._arCoreCanvas)
+				this._arCoreCanvas.width = window.innerWidth
+				this._arCoreCanvas.height = window.innerHeight
+				this._elContext = this._arCoreCanvas.getContext('webgl')
+				if(this._elContext === null){
+					throw 'Could not create CameraReality GL context'
 				}
-			})
+			}
 		}
 
 		window.addEventListener('resize', () => {
@@ -74,17 +75,32 @@ export default class CameraReality extends Reality {
 		}, false)
 	}
 
+	_requestTracker(name) {
+		switch(name) {
+			case 'ARGON_vuforia': 
+				return ArgonVuforiaTracker._requestTracker()
+		}
+		return null
+	}
+
 	/*
-	Called by a session before it hands a new XRPresentationFrame to the app
+	Called before animation frame callbacks are fired in the app
+	Anchors should be updated here
 	*/
-	_handleNewFrame(frame){
+	_beforeAnimationFrame(){
+		super._beforeAnimationFrame()
+
 		if(this._vrDisplay){
 			if (this._arCoreCameraRenderer) {
 				this._arCoreCameraRenderer.render()
 			}
-			this._vrDisplay.getFrameData(this._vrFrameData)
 		}
 
+		if (this._argonWrapper) {
+			for (let anchor in this._anchors) {
+				anchor.coordinateSystem._transform = this._argonWrapper.getAnchorTransformRelativeToTracker(anchor.uid)
+			}
+		}
 		// TODO update the anchor positions using ARCore or ARKit
 	}
 
@@ -110,10 +126,16 @@ export default class CameraReality extends Reality {
 			} else {
 				this._arKitWrapper.watch()
 			}
+		} else if (ArgonWrapper.HasArgon()) { // Using Argon
+			if (this._initialized === false) {
+				this._initialized = true
+				this._argonWrapper = ArgonWrapper.GetOrCreate()
+				this._argonVuforiaExtension = new ARGON_vuforia(this)
+			}
 		} else { // Using WebRTC
 			if(this._initialized === false){
 				this._initialized = true
-				navigator.mediaDevices.getUserMedia({
+				return navigator.mediaDevices.getUserMedia({
 					audio: false,
 					video: { facingMode: "environment" }
 				}).then(stream => {
@@ -123,12 +145,14 @@ export default class CameraReality extends Reality {
                     this._videoEl.setAttribute('playsinline', true);
 					this._videoEl.style.width = '100%'
 					this._videoEl.style.height = '100%'
+					this._videoEl.style.objectFit = 'fill'
 					this._videoEl.srcObject = stream
 					this._videoEl.play()
 				}).catch(err => {
-					console.error('Could not set up video stream', err)
+					console.error(err)
 					this._initialized = false
 					this._running = false
+					throw new Error('Could not set up video stream')
 				})
 			} else {
 				this._xr._realityEls.appendChild(this._videoEl)
@@ -174,81 +198,83 @@ export default class CameraReality extends Reality {
 			return
 		}
 		// This assumes that the anchor's coordinates are in the tracker coordinate system
-		anchor.coordinateSystem._relativeMatrix = anchorInfo.transform
+		anchor._transform = anchorInfo.transform
 	}
 
-	_addAnchor(anchor, display){
-		// Convert coordinates to the tracker coordinate system so that updating from ARKit transforms is simple
+	_addAnchor(anchor){
 		if(this._arKitWrapper !== null){
-			this._arKitWrapper.addAnchor(anchor.uid, anchor.coordinateSystem._poseModelMatrix).then(
+			this._arKitWrapper.addAnchor(anchor.uid, anchor._transform).then(
 				detail => this._handleARKitAddObject(detail)
 			)
+		}
+		if (this._argonWrapper !== null) {
+			this._argonWrapper.addAnchor(anchor.uid, anchor._transform)
 		}
 		// ARCore as implemented in the browser does not offer anchors except on a surface, so we just use untracked anchors
 		this._anchors.set(anchor.uid, anchor)
 		return anchor.uid
 	}
 
-	/*
-	Creates an anchor offset relative to a surface, as found by a ray
-	normalized screen x and y are in range 0..1, with 0,0 at top left and 1,1 at bottom right
-	returns a Promise that resolves either to an AnchorOffset with the first hit result or null if the hit test failed
-	*/
-	_findAnchor(normalizedScreenX, normalizedScreenY, display){
+	_requestHitTest(normalizedScreenX, normalizedScreenY){
 		return new Promise((resolve, reject) => {
-			if(this._arKitWrapper !== null){	
+			if(this._arKitWrapper !== null){
+				
 				// Perform a hit test using the ARKit integration
 				this._arKitWrapper.hitTest(normalizedScreenX, normalizedScreenY, ARKitWrapper.HIT_TEST_TYPE_EXISTING_PLANES).then(hits => {
 					if(hits.length === 0){
 						resolve(null)
-						// console.log('miss')
 						return
 					}
 					const hit = this._pickARKitHit(hits)
-					hit.anchor_transform[13] += XRViewPose.SITTING_EYE_HEIGHT
-					hit.world_transform[13] += XRViewPose.SITTING_EYE_HEIGHT
 
-					// Use the first hit to create an XRAnchorOffset, creating the XRAnchor as necessary
-
-					// TODO use XRPlaneAnchor for anchors with extents
-
-					let anchor = this._getAnchor(hit.uuid)
-					if(anchor === null){
-						let coordinateSystem = new XRCoordinateSystem(display, XRCoordinateSystem.TRACKER)
-						coordinateSystem._relativeMatrix = hit.anchor_transform
-						anchor = new XRAnchor(coordinateSystem, hit.uuid)
-						this._anchors.set(anchor.uid, anchor)
+					const hitTestResult = new XRHit()
+					hitTestResult._transform = hit.world_transform
+					if (hit.uuid && (hitTestResult._anchor = this._getAnchor(hit.uuid) === null)) {
+						console.log('unknown anchor', hit.uuid) // this anchor should already exist
 					}
 
-					const offsetPosition = [
-						hit.world_transform[12] - hit.anchor_transform[12],
-						hit.world_transform[13] - hit.anchor_transform[13],
-						hit.world_transform[14] - hit.anchor_transform[14]
-					]
-					const worldRotation = new Quaternion().setFromRotationMatrix(hit.world_transform)
-					const inverseAnchorRotation = new Quaternion().setFromRotationMatrix(hit.anchor_transform).inverse()
-					const offsetRotation = new Quaternion().multiplyQuaternions(worldRotation, inverseAnchorRotation)
-					const anchorOffset = new XRAnchorOffset(anchor.uid)
-					anchorOffset.poseMatrix = MatrixMath.mat4_fromRotationTranslation(new Float32Array(16), offsetRotation.toArray(), offsetPosition)
-					resolve(anchorOffset)
+					resolve([hitTestResult])
 				})
+
 			} else if(this._vrDisplay !== null){
+
 				// Perform a hit test using the ARCore data
 				let hits = this._vrDisplay.hitTest(normalizedScreenX, normalizedScreenY)
 				if(hits.length == 0){
 					resolve(null)
 					return
 				}
+
 				hits.sort((a, b) => a.distance - b.distance)
-				let anchor = this._getAnchor(hits[0].uuid)
-				if(anchor === null){
-					let coordinateSystem = new XRCoordinateSystem(display, XRCoordinateSystem.TRACKER)
-					coordinateSystem._relativeMatrix = hits[0].modelMatrix
-					coordinateSystem._relativeMatrix[13] += XRViewPose.SITTING_EYE_HEIGHT
-					anchor = new XRAnchor(coordinateSystem)
-					this._anchors.set(anchor.uid, anchor)
+
+				const hitTestResults = []
+				for (let i=0; i<hits.length; i++) {
+					const hit = hits[i]
+					const hitTestResult = hitTestResults[i] = new XRHit
+					hitTestResult._transform = hit.modelMatrix
+					if (hit.uuid && (hitTestResult._anchor = this._getAnchor(hit.uuid) === null)) {
+						console.log('unknown anchor', hit.uuid) // this anchor should already exist
+					}
 				}
-				resolve(new XRAnchorOffset(anchor.uid))
+				resolve(hitTestResults)
+
+			} else if (this._argonWrapper !== null) {
+				this._argonWrapper.hitTest(normalizedScreenX, normalizedScreenY).then((hits)=>{
+					if (hits.length === 0) {
+						resolve(null)
+						return
+					}
+					const hitTestResults = []
+					for (let i=0; i<hits.length; i++) {
+						const hit = hits[i]
+						const hitTestResult = hitTestResults[i] = new XRHit(hit.resultId)
+						hitTestResult._transform = hitTestResults[0].transform
+						if (hit.uuid && (hitTestResult._anchor = this._getAnchor(hit.anchorId) === null)) {
+							console.log('unknown anchor', hit.uuid) // this anchor should already exist
+						}
+					}
+					resolve(hitTestResults)
+				})
 			} else {
 				resolve(null) // No platform support for finding anchors
 			}
@@ -294,34 +320,38 @@ export default class CameraReality extends Reality {
 		return info
 	}
 
-	/*
-	Found intersections with anchors and planes by a ray normalized screen x and y are in range 0..1, with 0,0 at top left and 1,1 at bottom right
-	returns an Array of VRHit
-	*/
-	_hitTestNoAnchor(normalizedScreenX, normalizedScreenY, display){
+	_hitTest(normalizedScreenX, normalizedScreenY){
 		if(this._arKitWrapper !== null){
 			// Perform a hit test using the ARKit integration
 			let hits = this._arKitWrapper.hitTestNoAnchor(normalizedScreenX, normalizedScreenY);
-			for (let i = 0; i < hits.length; i++) {
-				hits[i].modelMatrix[13] += XRViewPose.SITTING_EYE_HEIGHT
-			}
 			if(hits.length == 0){
 				return null;
 			}
-			return hits;
+			const hitTestResults = []
+			for (let i = 0; i < hits.length; i++) {
+				const result = hitTestResults[i] = new XRHit()
+				result._transform = hits[i].modelMatrix
+			}
+			return hitTestResults;
+
 		} else if(this._vrDisplay !== null) {
+
 			// Perform a hit test using the ARCore data
 			let hits = this._vrDisplay.hitTest(normalizedScreenX, normalizedScreenY)
-			for (let i = 0; i < hits.length; i++) {
-				hits[i].modelMatrix[13] += XRViewPose.SITTING_EYE_HEIGHT
-			}
 			if(hits.length == 0){
 				return null;
 			}
-			return hits;
+			const hitTestResults = []
+			for (let i = 0; i < hits.length; i++) {
+				const result = hitTestResults[i] = new XRHit()
+				result._transform = hits[i].modelMatrix
+			}
+			return hitTestResults;
+
 		} else {
-			// No platform support for finding anchors
-			return null;
+
+			// use default implementation
+			return Reality.prototype._hitTest.call(this, normalizedScreenX, normalizedScreenY)
 		}
 	}
 

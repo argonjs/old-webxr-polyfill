@@ -50,14 +50,19 @@
 			class ARAnchorExample extends XRExampleBase {
 				constructor(domElement){
 					super(domElement, false)
-					this.anchorsToAdd = [] // { node, x, y, z }
 
 					this.addObjectButton = document.createElement('button')
 					this.addObjectButton.setAttribute('class', 'add-object-button')
 					this.addObjectButton.innerText = 'Add anchor'
 					this.el.appendChild(this.addObjectButton)
+
 					this.addObjectButton.addEventListener('click', ev => {
-						this.addAnchoredModel(this.createSceneGraphNode(), 0, 0, -0.75)
+						this.session.requestMidAirAnchor().then((anchor)=>{
+							const anchorObject = this.getXRObject3D(anchor)
+							const sceneGraphNode = this.createSceneGraphNode();
+							anchorObject.add(sceneGraphNode)
+							sceneGraphNode.position.set(0,0,-0.75)
+						})
 					})
 				}
 
@@ -73,29 +78,6 @@
 					let geometry = new THREE.BoxBufferGeometry(0.1, 0.1, 0.1)
 					let material = new THREE.MeshPhongMaterial({ color: '#FF9999' })
 					return new THREE.Mesh(geometry, material)
-				}
-
-				/*
-					addAnchoredModel creates an anchor at (x,y,z) relative to the camera and positions the sceneGraphNode on the anchor from that point on
-				*/
-				addAnchoredModel(sceneGraphNode, x, y, z){
-					// Save this info for use during the next render frame
-					this.anchorsToAdd.push({
-						node: sceneGraphNode,
-						x: x, y: y, z: z
-					})
-				}
-
-				// Called once per frame
-				updateScene(frame){
-					const headCoordinateSystem = frame.getCoordinateSystem(XRCoordinateSystem.HEAD_MODEL)
-					// Create anchors and start tracking them
-					for(let anchorToAdd of this.anchorsToAdd){
-						// Create the anchor and tell the base class to update the node with its position
-						const anchorUID = frame.addAnchor(headCoordinateSystem, [anchorToAdd.x, anchorToAdd.y, anchorToAdd.z])
-						this.addAnchoredNode(new XRAnchorOffset(anchorUID), anchorToAdd.node)
-					}
-					this.anchorsToAdd = []
 				}
 			}
 

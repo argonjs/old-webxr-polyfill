@@ -83,38 +83,28 @@
 					this.scene.add(directionalLight)
 				}
 
-				// Called once per frame, before render, to give the app a chance to update this.scene
-				updateScene(frame){
-					// If we have tap data, attempt a hit test for a surface
-					if(this._tapEventData !== null){
-						const x = this._tapEventData[0]
-						const y = this._tapEventData[1]
-						this._tapEventData = null
-						// Attempt a hit test using the normalized screen coordinates
-						frame.findAnchor(x, y).then(anchorOffset => {
-							if(anchorOffset === null){
-								this._messageEl.innerHTML = 'miss'
-							} else {
-								this._messageEl.innerHTML = 'hit'
-								this.addAnchoredNode(anchorOffset, this._createSceneGraphNode())
-							}
-						}).catch(err => {
-							console.error('Error in hit test', err)
-						})
-					}
-				}
-
 				// Save screen taps as normalized coordinates for use in this.updateScene
 				_onTouchStart(ev){
 					if (!ev.touches || ev.touches.length === 0) {
 						console.error('No touches on touch event', ev)
 						return
 					}
+
 					//save screen coordinates normalized to -1..1 (0,0 is at center and 1,1 is at top right)
-					this._tapEventData = [
-						ev.touches[0].clientX / window.innerWidth,
-						ev.touches[0].clientY / window.innerHeight
-					]
+					const normalizedX = ev.touches[0].clientX / window.innerWidth
+					const normalizedY = ev.touches[0].clientY / window.innerHeight
+			
+					this.session.requestHitTest(normalizedX, normalizedY).then((hits)=>{
+						if (!hits) {
+							this._messageEl.innerHTML = 'miss'
+							return
+						}
+						this._messageEl.innerHTML = 'hit'
+						const xrObject3D = this.getXRObject3D(hits[0].createAnchor())
+						xrObject3D.add(this._createSceneGraphNode())
+					}).catch((err)=>{
+						this.showMessage(err)
+					})
 				}
 
 				// Creates a box used to indicate the location of an anchor offset
