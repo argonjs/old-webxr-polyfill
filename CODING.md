@@ -87,7 +87,7 @@ The reason that you use anchors instead of just placing objects in a global coor
 
 First, let's add an anchor just floated in space a meter in front of the current head position.
 
-This code uses the `XRPresentationFrame`, so it would live in the `handleFrame` method above, where the '// XXX' comment is:
+This code uses the `XRFrame`, so it would live in the `handleFrame` method above, where the '// XXX' comment is:
 
 			const sceneNode = createSceneNode() // if using Three.js, could be an Object3D or a Group
 			let anchorUID = frame.addAnchor(headCoordinateSystem, [0, 0, -1]) 

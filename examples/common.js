@@ -105,24 +105,29 @@ class XRExampleBase {
 				stageObject.add(this.floorGroup)
 			})
 
-			const r2 = this.session.requestFrameOfReference('eyeLevel').then((frame)=>{
+			const r2 = this.session.requestFrameOfReference('eye-level').then((frame)=>{
 				this.eyeLevelFrameOfReference = frame
 			})
 
-			const r3 = this.session.requestFrameOfReference('headModel').then((frame)=>{
+			const r3 = this.session.requestFrameOfReference('head-model').then((frame)=>{
 				this.headModelFrameOfReference = frame
 			})
 
 			return [r1,r2,r3]
 		}).then((requestedFrames)=>{
+
 			return Promise.all(requestedFrames.map(framePromise => framePromise.catch(e => e))).then(()=>{
-				if(this.shouldStartPresenting){
+				
+				this.frameOfReference = this.headModelFrameOfReference
+
+				if (this.shouldStartPresenting) {
 					// Give extending classes the opportunity to initially populate the scene
 					this.initializeScene()
 					// VR Displays need startPresenting called due to input events like a click
 					this.startPresenting()
 				}
 			})
+			
 		}).catch(err => {
 			console.error('Error requesting session', err)
 			this.showMessage('Could not initiate the session')
@@ -183,46 +188,38 @@ class XRExampleBase {
 	/*
 	Extending classes that need to update the layer during each frame should override this method
 	*/
-	updateScene(frame, frameOfReference){}
+	updateScene(frame){}
 
 	_handleFrame(frame){
 		const nextFrameRequest = this.session.requestAnimationFrame(this._boundHandleFrame)
 
-		let targetFrameOfReference = null
-		let devicePose = null
+		const frameOfReference = this.frameOfReference
 
-		if (this.stageFrameOfReference) {
-			targetFrameOfReference = this.stageFrameOfReference
-			devicePose = frame.getDevicePose(targetFrameOfReference)
-		}
-
-		if (!devicePose && this.eyeLevelFrameOfReference) {
-			targetFrameOfReference = this.eyeLevelFrameOfReference
-			devicePose = frame.getDevicePose(targetFrameOfReference)
-		}
-				
-		if (!devicePose && this.headModelFrameOfReference) {
-			targetFrameOfReference = this.headModelFrameOfReference
-			devicePose = frame.getDevicePose(targetFrameOfReference)
-		}
+		let devicePose = frame.getDevicePose(frameOfReference)
 
 		if (!devicePose) return // nothing to do
 
 		// Update xr objects in the scene graph
 		for (let xrObject of this.xrObjects.values()) {
-			const transform = xrObject.xrCoordinateSystem.getTransformTo(targetFrameOfReference)
+			const transform = xrObject.xrCoordinateSystem.getTransformTo(frameOfReference)
 			if (transform) {
 				xrObject.matrixAutoUpdate = false
 				xrObject.matrix.fromArray(transform)
 				xrObject.updateMatrixWorld(true)
-				if (xrObject.parent !== this.scene) this.scene.add(xrObject)
+				if (xrObject.parent !== this.scene) {
+					this.scene.add(xrObject)
+					console.log('added xrObject ' + xrObject.xrCoordinateSystem.uid || '')
+				}
 			} else {
-				this.scene.remove(xrObject)
+				if (xrObject.parent) {
+					this.scene.remove(xrObject)
+					console.log('removed xrObject ' + xrObject.xrCoordinateSystem.uid || '')
+				}
 			}
 		}
 
 		// Let the extending class update the scene before each render
-		this.updateScene(frame, targetFrameOfReference)
+		this.updateScene(frame)
 
 		// Prep THREE.js for the render of each XRView
 		this.renderer.autoClear = false
@@ -324,9 +321,11 @@ class ThingsOnSurfacesApp extends XRExampleBase {
 		const normalizedY = ev.touches[0].clientY / window.innerHeight
 
 		this.session.requestHitTest(normalizedX, normalizedY).then((hits)=>{
-			if (!hits) return
-			const xrObject3D = this.getXRObject3D(hits[0].createAnchor())
-			xrObject3D.add(this.createSceneGraphNode())
+			if (hits.length === 0) return
+			this.session.requestAnchorFromHit(hits[0]).then(hitAnchor => {
+				const hitAnchorObject3D = this.getXRObject3D(hitAnchor)
+				hitAnchorObject3D.add(this.createSceneGraphNode())
+			})
 		})
 	}
 }

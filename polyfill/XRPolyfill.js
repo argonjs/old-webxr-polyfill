@@ -11,7 +11,7 @@ import XRHitAnchor from './XRHitAnchor.js'
 import XRFrameOfReference from './XRFrameOfReference.js'
 import XRStageBounds from './XRStageBounds.js'
 import XRStageBoundsPoint from './XRStageBoundsPoint.js'
-import XRPresentationFrame from './XRPresentationFrame.js'
+import XRFrame from './XRFrame.js'
 import XRView from './XRView.js'
 import XRViewport from './XRViewport.js'
 import XRCoordinateSystem from './XRCoordinateSystem.js'
@@ -45,7 +45,7 @@ class XRPolyfill extends EventHandlerBase {
 		window.XRFrameOfReference = XRFrameOfReference
 		window.XRStageBounds = XRStageBounds
 		window.XRStageBoundsPoint = XRStageBoundsPoint
-		window.XRPresentationFrame = XRPresentationFrame
+		window.XRFrame = window.XRPresentationFrame = XRFrame
 		window.XRView = XRView
 		window.XRViewport = XRViewport
 		window.XRCoordinateSystem = XRCoordinateSystem
@@ -53,7 +53,7 @@ class XRPolyfill extends EventHandlerBase {
 		window.XRLayer = XRLayer
 		window.XRWebGLLayer = XRWebGLLayer
 
-		// These elements are at the beginning of the body and absolutely positioned to fill the entire window
+		// These elements are at the beginning of the document element and absolutely positioned to fill the entire window
 		// Sessions and realities add their elements to these divs so that they are in the right render order
 		this._sessionEls = document.createElement('div')
 		this._sessionEls.setAttribute('class', 'webxr-sessions')
@@ -63,18 +63,19 @@ class XRPolyfill extends EventHandlerBase {
 			el.style.position = 'fixed'
 			el.style.width = '100%'
 			el.style.height = '100%'
+			el.style.display = 'none'
 		}
 
 		document.addEventListener('DOMContentLoaded', () => {
-			document.body.style.width = '100%'
-			document.body.style.height = '100%'
-			document.body.prepend(this._sessionEls)
-			document.body.prepend(this._realityEls) // realities must render behind the sessions
+			document.documentElement.prepend(this._sessionEls)
+			document.documentElement.prepend(this._realityEls) // realities must render behind the sessions
 		})
 	}
 
 	requestDevice(){
 		return Promise.resolve().then(()=>{
+			if (isAppleWebView()) return null // don't use vr display in ios apps
+
 			if(typeof navigator.getVRDisplays === 'function') {
 				return navigator.getVRDisplays().then(displays => {
 					let passThroughCameraDisplay = null
@@ -86,7 +87,7 @@ class XRPolyfill extends EventHandlerBase {
 							passThroughCameraDisplay = display
 							continue
 						}
-						if (dipslay.capabilities.canPresent) {
+						if (display.capabilities.canPresent) {
 							presentableDisplay = display
 							continue
 						}
@@ -103,13 +104,26 @@ class XRPolyfill extends EventHandlerBase {
 	}
 
 	// For backwards compatability. TO BE REMOVED.
-	requestDisplays() {
-		console.warn('requestDisplays() is deprecated. Use requestDevice()')
-		this.requestDevice().then(device=>[device])
+	getDisplays() {
+		console.warn('getDisplays() is deprecated, running in compatability mode. '
+			+ 'All session requests will treat "immersive" parameter as true, and document '
+			+ 'will remain visible during "flat" immersive sessions.'
+			+ 'Switch to requestDevice() for normal functionality');
+		return this.requestDevice().then(device => {
+			device._forceImmersive = true
+			device._keepDocumentBodyVisible = true
+			device._onlyAR = true
+			return [device]
+		})
 	}
 
 	//attribute EventHandler ondevicechange;
 }
 
-/* Install XRPolyfill if window.XR does not exist */
-if(typeof navigator.XR === 'undefined') navigator.XR = new XRPolyfill()
+/* Install XRPolyfill if navigator.xr does not exist */
+if(typeof navigator.xr === 'undefined') navigator.xr = new XRPolyfill()
+if(typeof navigator.XR === 'undefined') navigator.XR = navigator.xr // deprecated
+
+function isAppleWebView() {
+	return navigator.userAgent.indexOf('AppleWebKit') && navigator.userAgent.indexOf('Safari') === -1;
+}

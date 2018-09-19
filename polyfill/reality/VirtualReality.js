@@ -4,8 +4,8 @@ import Reality from '../Reality.js'
 VirtualReality is a Reality that is empty and waiting for fanstastic CG scenes.
 */
 export default class VirtualReality extends Reality {
-	constructor(xr){
-		super(xr, 'Virtual', false, false)
+	constructor(device){
+		super(device, 'Virtual', false, false)
 	}
 
 	/*
@@ -21,14 +21,14 @@ export default class VirtualReality extends Reality {
 	}
 
 	/*
-	Called by a session before it hands a new XRPresentationFrame to the app
+	Called by a session before it hands a new XRFrame to the app
 	*/
 	_beforeAnimationFrame(){}
 
 	/*
 	Create an anchor hung in space
 	*/
-	_addAnchor(anchor, display){
+	_addAnchor(anchor){
 		this._anchors.set(anchor.uid, anchor)
 		return anchor.uid
 	}

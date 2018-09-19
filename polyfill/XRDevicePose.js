@@ -7,16 +7,33 @@ It also describes the view matrices that should be used by the application to re
 */
 export default class XRDevicePose {
 	constructor(poseModelMatrix){
-		this._poseModelMatrix = poseModelMatrix
+		this.__transform = poseModelMatrix
 	}
 
-	get poseModelMatrix(){ return this._poseModelMatrix }
+	get poseModelMatrix(){ return this.__transform }
 
 	getViewMatrix(view){
-		if (view._viewMatrix) return view._viewMatrix
-		const out = new Float32Array(16)
-		MatrixMath.mat4_eyeView(out, this._poseModelMatrix) // TODO offsets from view
-		return out
+		if (view.viewMatrix) {
+			return new Float32Array(view.viewMatrix)
+		} else if (view.eyeDisplacementMatrix) {
+			return MatrixMath.mat4_multiply(new Float32Array(16), this.__transform, view.eyeDisplacementMatrix)
+			// return MatrixMath.mat4_invert(transform, transform)
+		} else {
+			return new Float32Array(this.__transform)
+			// return MatrixMath.mat4_invert(transform, transform)
+		}
+	}
+
+	get _position(){
+		if (!this.__transform) return null
+		return [this.__transform[12], this.__transform[13], this.__transform[14]]
+	}
+
+	get _orientation(){
+		if (!this.__transform) return null
+		let quat = new Quaternion()
+		quat.setFromRotationMatrix(this.__transform)
+		return quat.toArray()
 	}
 }
 

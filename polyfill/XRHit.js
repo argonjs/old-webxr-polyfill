@@ -1,36 +1,35 @@
-import MatrixMath from './fill/MatrixMath.js'
-import Quaternion from './fill/Quaternion.js'
-
 import XRCoordinateSystem from './XRCoordinateSystem.js'
-import XRHitAnchor from './XRHitAnchor.js'
+import XRAnchor from './XRAnchor.js'
 
 /*
-XRHit contains the result of a hit test, and is only valid for one frame.
+XRHit contains the result of a hit test.
 
-In order to maintain a reference to the point of contact, createAnchor() must be called 
-while the hit test is still valid (within the same frame)
+In order to retain the point of contact beyond a single frame, 
+XRFrame.createAnchorFromHit() must be used.
 */
 export default class XRHit extends XRCoordinateSystem {
-	constructor(){
+	constructor(uid){
 		super()
-		this._anchor = null
+		this._uid = uid || XRAnchor._generateUID()
+		this._targetAnchor = null
+		this._type = 'unknown'
 	}
 
-	/** 
-	 * The anchor that was hit, if there is one 
+	get uid(){ return this._uid }
+
+	/**
+	 * The type of object that was hit
 	 */
-	get anchor() { return this._anchor }
+	get type() { return this._type }
 
 	/** 
-	 * Create an XRHitAnchor attached at the point of contact 
+	 * The object that was hit, if known
 	 */
-	createAnchor() {
-		if (this._transform === null) 
-			throw new Error('createAnchor must be called before the hit test result has expired')
-		
-		const anchor = new XRHitAnchor(this._transform, this._anchor)
-		// notify the Reality to create an anchor from this hit
-		this.dispatchEvent(new CustomEvent('_createAnchor', {anchor})) 
-		return anchor
-	}
+	get target() { return this._target }
 }
+
+XRHit.UNKNOWN = "unknown"
+XRHit.FLOOR = "floor"
+XRHit.PLATFORM = "platform"
+XRHit.CEILING = "ceiling"
+XRHit.WALL = "wall"

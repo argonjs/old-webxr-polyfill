@@ -51,12 +51,11 @@ export default class FlatDevice extends XRDevice {
 		this._devicePosition = null				// Vector3
 		this._deviceWorldMatrix = null			// Float32Array(16)
 
-		// Currently only support full screen views
+		// Use a full screen view as default
 		const fov = 50/2;
 		const fovs = new XRFieldOfView(fov, fov, fov, fov)
-		const depthNear = 0.1
-		const depthFar = 1000
-		this._views.push(new XRView(fovs, depthNear, depthFar))
+		const projectionMatrix = MatrixMath.mat4_perspectiveFromFieldOfView(new Float32Array(16), fovs, this.depthNear, this.depthFar)
+		this._views.push(new XRView(projectionMatrix))
 
 		this.__workingMatrix = new Float32Array(16)
 		this.__IDENTITY = MatrixMath.mat4_generateIdentity()
@@ -74,8 +73,6 @@ export default class FlatDevice extends XRDevice {
 		if(this._vrDisplay){ // Use ARCore
 			if(this._vrFrameData === null){
 				this._vrFrameData = new VRFrameData()
-				this._views[0]._depthNear = this._vrDisplay.depthNear
-				this._views[0]._depthFar = this._vrDisplay.depthFar
 				this._deviceOrientation = new Quaternion()
 				this._devicePosition = new Vector3()
 				this._deviceWorldMatrix = new Float32Array(16)
@@ -128,18 +125,47 @@ export default class FlatDevice extends XRDevice {
 	Called by a session to indicate that its baseLayer attribute has been set.
 	FlatDevice just adds the layer's canvas to DOM elements created by the XR polyfill
 	*/
-	_handleNewBaseLayer(baseLayer){
+	_handleNewBaseLayer(baseLayer, parameters){
 		if (this.baseLayer) {
-			this.__workingMatrix._sessionEls.removeChild(this.baseLayer.context.canvas)
+			this._xr._sessionEls.removeChild(this.baseLayer.context.canvas)
 		}
 
 		this.baseLayer = baseLayer;
-		baseLayer._context.canvas.style.width = "100%";
-		baseLayer._context.canvas.style.height = "100%";
-		baseLayer.framebufferWidth = this._xr._sessionEls.clientWidth;
-		baseLayer.framebufferHeight = this._xr._sessionEls.clientHeight;
+		if (baseLayer) {
+			baseLayer._context.canvas.style.width = "100%";
+			baseLayer._context.canvas.style.height = "100%";
+			baseLayer.framebufferWidth = this._xr._sessionEls.clientWidth;
+			baseLayer.framebufferHeight = this._xr._sessionEls.clientHeight;
+			
+			if (!this._keepDocumentBodyVisible) {
+				document.body.style.display = 'none'
+				document.documentElement.style.height = '0'
+			}
+			this._xr._realityEls.style.display = ''
+			this._xr._sessionEls.style.display = ''
+			this._xr._sessionEls.appendChild(baseLayer.context.canvas)
 
-		this._xr._sessionEls.appendChild(baseLayer.context.canvas)
+			const immersiveViewportSettings = document.createElement('meta')
+			immersiveViewportSettings.id = 'immersive-viewport-settings'
+			immersiveViewportSettings.name = 'viewport'
+			immersiveViewportSettings.content = 'width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0, viewport-fit=cover'
+			document.head.appendChild(immersiveViewportSettings)
+		} else {
+			delete document.body.style.display
+			delete document.documentElement.style.height
+			this._xr._realityEls.style.display = 'none'
+			this._xr._sessionEls.style.display = 'none'
+			const immersiveViewportSettings = document.queryElement('#immersive-viewport-settings')
+			document.head.removeChild(immersiveViewportSettings)
+		}
+
+		if (this._argonWrapper) {
+			if (this._immersiveSession) {
+				this._argonWrapper.setImmersiveMode(parameters.type)
+			} else {
+				this._argonWrapper.setImmersiveMode('none')
+			}
+		}
 	}
 
 	/*
@@ -151,10 +177,29 @@ export default class FlatDevice extends XRDevice {
 		}
 
 		if (this._argonWrapper !== null) {
-			this._views[0].setProjectionMatrix(this._argonWrapper.frameState.subviews[0].projectionMatrix)
-			this._pose._transform = this._argonWrapper.getEntityTransformRelativeToOrigin('ar.device.user')
-			this._eyeLevelFrameOfReference._transform = this._argonWrapper.getEntityTransformRelativeToOrigin('xr.eyeLevel') || this.__IDENTITY
-			this._stageFrameOfReference._transform = this._argonWrapper.getEntityTransformRelativeToOrigin('ar.device.stage')
+			var frameState = this._argonWrapper.frameState
+			var views = frameState.views
+
+			this._views.length = 0
+			for (var view of views) {
+				if (view.type === 'postprocess') continue;
+				let xrView = new XRView(
+					view.projectionMatrix, 
+					view.eyeDisplacementMatrix,
+					view.normalizedViewport,
+					view.type === 'righteye' ? 'right' : 'left'
+				)
+				this._views.push(xrView)
+			}
+
+			this._pose._transform = this._argonWrapper.getEntityTransform('xr.device')
+			this._eyeLevelFrameOfReference._transform = this._argonWrapper.getEntityTransform('xr.eye-level')
+			this._stageFrameOfReference._transform = this._argonWrapper.getEntityTransform('xr.stage')
+
+			if (this.baseLayer) {
+				this.baseLayer.framebufferWidth = frameState.immersiveSize.width * frameState.contentScaleFactor
+				this.baseLayer.framebufferHeight = frameState.immersiveSize.height * frameState.contentScaleFactor
+			}
 		} 
 	}
 
@@ -238,8 +283,10 @@ export default class FlatDevice extends XRDevice {
 	}
 
 	_handleARKitWindowResize(ev){
-		this.baseLayer.framebufferWidth = ev.detail.width;
-		this.baseLayer.framebufferHeight = ev.detail.height;
+		if (this.baseLayer) {
+			this.baseLayer.framebufferWidth = ev.detail.width;
+			this.baseLayer.framebufferHeight = ev.detail.height;
+		}
 	}
 
 	_handleOnError(ev){

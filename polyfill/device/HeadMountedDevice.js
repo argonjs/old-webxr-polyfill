@@ -18,7 +18,7 @@ export default class HeadMountedDevice extends XRDevice {
 
 	static _requestDevice(xr, vrDisplay) {
 		return Promise.resolve().then(()=>{
-			if (!vrDisplay || !vrDisplay.capabilities.canPresent) 
+			if (!vrDisplay || !vrDisplay.capabilities.canPresent || vrDisplay.displayName.indexOf('polyfill') !== -1)  
 				throw new Error('HeadMountedDevice is not available')
 			return new HeadMountedDevice(xr, vrDisplay)
 		})
@@ -65,6 +65,7 @@ export default class HeadMountedDevice extends XRDevice {
 	_handleNewBaseLayer(baseLayer){
 		if (!baseLayer) {
 			if (this._vrDisplay.isPresenting) this._vrDisplay.exitPresent()
+			return
 		}
 
 		this._vrDisplay.requestPresent([{

@@ -1,8 +1,8 @@
 import EventHandlerBase from './fill/EventHandlerBase.js'
+import {XRAnchorOffset} from './XRFrame.js'
 
 /*
 A script that wishes to make use of an XRDevice can request an XRSession.
-An XRSession provides a list of the available Reality instances that the script may request as well as make a request for an animation frame.
 */
 export default class XRSession extends EventHandlerBase {
 	constructor(xr, device, createParameters, reality){
@@ -19,6 +19,8 @@ export default class XRSession extends EventHandlerBase {
 		this._callbacks = {}
 		this._nextFramePromise = null
 		this._nextFrameResolve = null
+
+		this._didPrintHitTestDeprecationWarning = false
 	}
 
 	get device(){ return this._device }
@@ -38,11 +40,11 @@ export default class XRSession extends EventHandlerBase {
 		this.dispatchEvent(new CustomEvent('_baseLayerChanged'))
 	}
 
-	get depthNear(){ this._device._depthNear }
-	set depthNear(value){ this._device._depthNear = value }
+	get depthNear(){ return this._device.depthNear }
+	set depthNear(value){ this._device.depthNear = value }
 
-	get depthFar(){ this._device._depthFar }
-	set depthFar(value){ this._device._depthFar = value }
+	get depthFar(){ return this._device.depthFar }
+	set depthFar(value){ this._device.depthFar = value }
 
 	requestAnimationFrame(callback) {
 		if(this._ended) return null
@@ -52,6 +54,11 @@ export default class XRSession extends EventHandlerBase {
         this._callbackId++;
         this._callbacks[this._callbackId] = callback;
         return this._callbackId;
+	}
+
+	// backwards compatability
+	requestFrame(callback) {
+		return this.requestAnimationFrame(callback)
 	}
 
 	cancelAnimationFrame(id) {
@@ -76,7 +83,9 @@ export default class XRSession extends EventHandlerBase {
 	 * @param {*} options 
 	 */
 	requestFrameOfReference(type, options) {
-		return this._device._requestFrameOfReference(type, options)
+		return Promise.resolve().then(() => {
+			return this._device._getFrameOfReference(type, options)
+		})
 	}
 
 	/*
@@ -98,22 +107,41 @@ export default class XRSession extends EventHandlerBase {
 	}
 
 	/**
-	 * Return a promise that resolves (at the next frame) to a list of XRHitTestResult instances, 
-	 * or null if the hit test fails
-	 * 
-	 * This is the recommended approach for performing one-off hit tests in response to user input
+	 * Return a promise that resolves to a list of XRHit instances, 
+	 * or null if the hit test fails. The UA will attempt to resolve this promise before the next animation frame
 	 */
 	requestHitTest(normalizedScreenX, normalizedScreenY) {
 		return this._reality._requestHitTest(normalizedScreenX, normalizedScreenY)
 	}
 
 	/**
-	 * Return a promise that resolves (at the next frame) to a new mid-air anchor at the current device pose
+	 * @deprecated Use reqeustHitTest
 	 */
-	requestMidAirAnchor(){
+	hitTest(normalizedScreenX, normalizedScreenY) {
+		// Array<XRHit> hitTest(float32, float32);
+		if (!this._didPrintHitTestDeprecationWarning) {
+			console.warn('XRSession.hitTest() is deprecated, use XRSession.requestHitTest()')
+			this._didPrintHitTestDeprecationWarning = true
+		}
+		return this.reality._requestHitTest(normalizedScreenX, normalizedScreenY).then((hits)=>{
+			if (hits.length === 0) return null
+			return new XRAnchorOffset(hits[0])
+		})
+	}
+
+	/**
+	 * Return a promise that resolves (at the next frame) to a new XRAnchor at the current device pose
+	 */
+	requestMidAirAnchor() {
 		//DOMString? requestMidAirAnchor();
 		return this._onNextFrame().then((frame)=>{
 			return frame.createMidAirAnchor()
+		})
+	}
+
+	requestAnchorFromHit(hit) {
+		return this._onNextFrame().then((frame) => {
+			return frame.createAnchorFromHit(hit)
 		})
 	}
 
@@ -126,7 +154,7 @@ export default class XRSession extends EventHandlerBase {
 	}
 
 	_createPresentationFrame(){
-		return new XRPresentationFrame(this)
+		return new XRFrame(this)
 	}
 
 	_onNextFrame() {

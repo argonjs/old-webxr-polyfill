@@ -3,13 +3,9 @@ import XRAnchor from '../XRAnchor.js'
 
 import XRLightEstimate from '../XRLightEstimate.js'
 
-import MatrixMath from '../fill/MatrixMath.js'
-import Quaternion from '../fill/Quaternion.js'
-
 import ARKitWrapper from '../platform/ARKitWrapper.js'
 import ArgonWrapper from '../platform/ArgonWrapper.js'
 import ARCoreCameraRenderer from '../platform/ARCoreCameraRenderer.js'
-import XRCoordinateSystem from '../XRCoordinateSystem.js';
 import XRHit from '../XRHit.js';
 
 import ArgonVuforiaTracker from '../tracker/ArgonVuforiaTracker.js'
@@ -27,12 +23,11 @@ export default class CameraReality extends Reality {
 		return vrDisplay.capabilities.hasPassThroughCamera // This is the ARCore extension to WebVR 1.1
 	}
 
-	constructor(xr, device){
-		super(xr, 'Camera', true, true)
+	constructor(device){
+		super(device, 'Camera', true, true)
 
 		this._initialized = false
 		this._running = false
-		this._device = device
 		this._lightEstimate = new XRLightEstimate();
 
 		// This is used if we have access to ARKit 
@@ -75,10 +70,10 @@ export default class CameraReality extends Reality {
 		}, false)
 	}
 
-	_requestTracker(name) {
+	_requestTracker(name, options) {
 		switch(name) {
 			case 'ARGON_vuforia': 
-				return ArgonVuforiaTracker._requestTracker()
+				return ArgonVuforiaTracker._requestTracker(this, options)
 		}
 		return null
 	}
@@ -97,8 +92,8 @@ export default class CameraReality extends Reality {
 		}
 
 		if (this._argonWrapper) {
-			for (let anchor in this._anchors) {
-				anchor.coordinateSystem._transform = this._argonWrapper.getAnchorTransformRelativeToTracker(anchor.uid)
+			for (let anchor of this._anchors.values()) {
+				anchor._transform = this._argonWrapper.getAnchorTransform(anchor.uid)
 			}
 		}
 		// TODO update the anchor positions using ARCore or ARKit
@@ -130,7 +125,6 @@ export default class CameraReality extends Reality {
 			if (this._initialized === false) {
 				this._initialized = true
 				this._argonWrapper = ArgonWrapper.GetOrCreate()
-				this._argonVuforiaExtension = new ARGON_vuforia(this)
 			}
 		} else { // Using WebRTC
 			if(this._initialized === false){
@@ -192,10 +186,10 @@ export default class CameraReality extends Reality {
 	}
 
 	_updateAnchorFromARKitUpdate(uid, anchorInfo){
-		const anchor = this._anchors.get(uid) || null
+		let anchor = this._anchors.get(uid) || null
 		if(anchor === null){
-			// console.log('unknown anchor', anchor)
-			return
+			anchor = new XRAnchor(uid)
+			this._anchors.set(uid, anchor)
 		}
 		// This assumes that the anchor's coordinates are in the tracker coordinate system
 		anchor._transform = anchorInfo.transform
@@ -208,7 +202,7 @@ export default class CameraReality extends Reality {
 			)
 		}
 		if (this._argonWrapper !== null) {
-			this._argonWrapper.addAnchor(anchor.uid, anchor._transform)
+			this._argonWrapper.createMidAirAnchor(anchor.uid, anchor._transform)
 		}
 		// ARCore as implemented in the browser does not offer anchors except on a surface, so we just use untracked anchors
 		this._anchors.set(anchor.uid, anchor)
@@ -220,63 +214,45 @@ export default class CameraReality extends Reality {
 			if(this._arKitWrapper !== null){
 				
 				// Perform a hit test using the ARKit integration
-				this._arKitWrapper.hitTest(normalizedScreenX, normalizedScreenY, ARKitWrapper.HIT_TEST_TYPE_EXISTING_PLANES).then(hits => {
-					if(hits.length === 0){
-						resolve(null)
-						return
-					}
-					const hit = this._pickARKitHit(hits)
+				this._arKitWrapper.hitTest(normalizedScreenX, normalizedScreenY, ARKitWrapper.HIT_TEST_TYPE_EXISTING_PLANES).then(hitResults => {
+					const hitResult = this._pickARKitHit(hitResults)
 
-					const hitTestResult = new XRHit()
-					hitTestResult._transform = hit.world_transform
-					if (hit.uuid && (hitTestResult._anchor = this._getAnchor(hit.uuid) === null)) {
-						console.log('unknown anchor', hit.uuid) // this anchor should already exist
-					}
+					const hit = new XRHit
+					hit._transform = hitResult.world_transform
+					hit._targetAnchor = this._getAnchor(hitResult.uuid)
 
-					resolve([hitTestResult])
+					resolve([hit])
 				})
 
 			} else if(this._vrDisplay !== null){
 
 				// Perform a hit test using the ARCore data
-				let hits = this._vrDisplay.hitTest(normalizedScreenX, normalizedScreenY)
-				if(hits.length == 0){
-					resolve(null)
-					return
-				}
+				const hitResults = this._vrDisplay.hitTest(normalizedScreenX, normalizedScreenY)
+				hitResults.sort((a, b) => a.distance - b.distance)
 
-				hits.sort((a, b) => a.distance - b.distance)
-
-				const hitTestResults = []
-				for (let i=0; i<hits.length; i++) {
-					const hit = hits[i]
-					const hitTestResult = hitTestResults[i] = new XRHit
-					hitTestResult._transform = hit.modelMatrix
-					if (hit.uuid && (hitTestResult._anchor = this._getAnchor(hit.uuid) === null)) {
-						console.log('unknown anchor', hit.uuid) // this anchor should already exist
-					}
+				const hits = []
+				for (let i=0; i<hitResults.length; i++) {
+					const hitResult = hitResults[i]
+					const hit = new XRHit
+					hit._targetAnchor = this._getAnchor(hitResult.uuid)
+					hit._transform = hitResult.modelMatrix
+					hits[i] = hit
 				}
-				resolve(hitTestResults)
+				resolve(hits)
 
 			} else if (this._argonWrapper !== null) {
-				this._argonWrapper.hitTest(normalizedScreenX, normalizedScreenY).then((hits)=>{
-					if (hits.length === 0) {
-						resolve(null)
-						return
+				this._argonWrapper.requestHitTest(normalizedScreenX, normalizedScreenY).then((hitResults)=>{
+					const hits = []
+					for (let i=0; i<hitResults.length; i++) {
+						const hitResult = hitResults[i] // {id:string, transform:Float32Array[16]}
+						const hit = new XRHit(hitResult.id)
+						hit._transform = hitResult.pose
+						hits[i] = hit
 					}
-					const hitTestResults = []
-					for (let i=0; i<hits.length; i++) {
-						const hit = hits[i]
-						const hitTestResult = hitTestResults[i] = new XRHit(hit.resultId)
-						hitTestResult._transform = hitTestResults[0].transform
-						if (hit.uuid && (hitTestResult._anchor = this._getAnchor(hit.anchorId) === null)) {
-							console.log('unknown anchor', hit.uuid) // this anchor should already exist
-						}
-					}
-					resolve(hitTestResults)
+					resolve(hits)
 				})
 			} else {
-				resolve(null) // No platform support for finding anchors
+				resolve([]) // No platform support for finding anchors
 			}
 		})
 	}
@@ -287,7 +263,7 @@ export default class CameraReality extends Reality {
 		this._anchors.delete(uid)
 	}
 
-	_pickARKitHit(data){
+	_pickARKitHit(data) {
 		if(data.length === 0) return null
 		let info = null
 
@@ -320,38 +296,36 @@ export default class CameraReality extends Reality {
 		return info
 	}
 
-	_hitTest(normalizedScreenX, normalizedScreenY){
+	_hitTest(normalizedScreenX, normalizedScreenY) {
 		if(this._arKitWrapper !== null){
 			// Perform a hit test using the ARKit integration
-			let hits = this._arKitWrapper.hitTestNoAnchor(normalizedScreenX, normalizedScreenY);
-			if(hits.length == 0){
-				return null;
+			let hitResults = this._arKitWrapper.hitTestNoAnchor(normalizedScreenX, normalizedScreenY);
+			const hits = []
+			for (let i = 0; i < hitResults.length; i++) {
+				const result = hits[i] = new XRHit()
+				result._transform = hitResults[i].modelMatrix
 			}
-			const hitTestResults = []
-			for (let i = 0; i < hits.length; i++) {
-				const result = hitTestResults[i] = new XRHit()
-				result._transform = hits[i].modelMatrix
-			}
-			return hitTestResults;
+			return hits;
 
 		} else if(this._vrDisplay !== null) {
 
 			// Perform a hit test using the ARCore data
-			let hits = this._vrDisplay.hitTest(normalizedScreenX, normalizedScreenY)
-			if(hits.length == 0){
-				return null;
+			let hitResults = this._vrDisplay.hitTest(normalizedScreenX, normalizedScreenY)
+			const hits = []
+			for (let i = 0; i < hitResults.length; i++) {
+				const result = hits[i] = new XRHit()
+				result._transform = hitResults[i].modelMatrix
 			}
-			const hitTestResults = []
-			for (let i = 0; i < hits.length; i++) {
-				const result = hitTestResults[i] = new XRHit()
-				result._transform = hits[i].modelMatrix
-			}
-			return hitTestResults;
+			return hits;
 
+		} else if (this._argonWrapper !== null) {
+			const centerHitTransform = this._argonWrapper.getEntityTransform('xr.center-hit')
+			if (!centerHitTransform) return null
+			const hit = new XRHit()
+			hit._transform = centerHitTransform
+			return [hit]
 		} else {
-
-			// use default implementation
-			return Reality.prototype._hitTest.call(this, normalizedScreenX, normalizedScreenY)
+			return [] // No platform support for finding anchors
 		}
 	}
 

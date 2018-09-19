@@ -16,6 +16,12 @@ export default class XRFrameOfReference extends XRCoordinateSystem {
     }
 }
 
-XRFrameOfReference.HEAD_MODEL = 'headModel'
-XRFrameOfReference.EYE_LEVEL = 'eyeLevel'
+XRFrameOfReference.HEAD_MODEL = 'head-model'
+XRFrameOfReference.EYE_LEVEL = 'eye-level'
 XRFrameOfReference.STAGE = 'stage'
+
+// backwards compatability
+XRCoordinateSystem.HEAD_MODEL = 'headModel'
+XRCoordinateSystem.EYE_LEVEL = 'eyeLevel'
+XRCoordinateSystem.STAGE = 'stage'
+

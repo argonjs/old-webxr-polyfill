@@ -6,15 +6,14 @@ An XRView describes a single view into an XR scene.
 It provides several values directly, and acts as a key to query view-specific values from other interfaces.
 */
 export default class XRView {
-	constructor(fov, depthNear, depthFar, eye=null){
-		this._fov = fov
-		this._depthNear = depthNear
-		this._depthFar = depthFar
+	constructor(projectionMatrix, 
+		eyeDisplacementMatrix = MatrixMath.mat4_generateIdentity(), 
+		normalizedViewport = new XRViewport(0, 0, 1, 1), 
+		eye = XRView.LEFT){
+		this._projectionMatrix = projectionMatrix
+		this._eyeDisplacement = eyeDisplacementMatrix
+		this._normalizedViewport = normalizedViewport
 		this._eye = eye
-		this._viewport = new XRViewport(0, 0, 1, 1)
-		this._projectionMatrix = new Float32Array(16)
-		this._viewMatrix = null
-		MatrixMath.mat4_perspectiveFromFieldOfView(this._projectionMatrix, this._fov, this._depthNear, this._depthFar)
 	}
 
 	get eye(){ return this._eye }
@@ -37,23 +36,12 @@ export default class XRView {
 	}
 
 	getViewport(layer){
-		if(this._eye === XRView.LEFT){
-			this._viewport.x = 0
-			this._viewport.y = 0
-			this._viewport.width = layer.framebufferWidth / 2
-			this._viewport.height = layer.framebufferHeight
-		} else if(this._eye === XRView.RIGHT){
-			this._viewport.x = layer.framebufferWidth / 2
-			this._viewport.y = 0
-			this._viewport.width = layer.framebufferWidth / 2
-			this._viewport.height = layer.framebufferHeight
-		} else {
-			this._viewport.x = 0
-			this._viewport.y = 0
-			this._viewport.width = layer.framebufferWidth
-			this._viewport.height = layer.framebufferHeight
+		return {
+			x: Math.round(this._normalizedViewport.x * layer.framebufferWidth),
+			y: Math.round(this._normalizedViewport.y * layer.framebufferHeight),
+			width: Math.round(this._normalizedViewport.width * layer.framebufferWidth),
+			height: Math.round(this._normalizedViewport.height * layer.framebufferHeight)
 		}
-		return this._viewport
 	}
 }
 

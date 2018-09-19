@@ -52,7 +52,6 @@
 			class HitTestExample extends XRExampleBase {
 				constructor(domElement){
 					super(domElement, false)
-					this._tapEventData = null // Will be filled in on touch start and used in updateScene
 
 					// A message at the bottom of the screen that shows whether a surface has been found
 					this._messageEl = document.createElement('div')
@@ -63,7 +62,7 @@
 					this._messageEl.style.color = 'white'
 					this._messageEl.style['font-size'] = '16px'
 
-					this.el.addEventListener('touchstart', this._onTouchStart.bind(this), false)
+					this.glCanvas.addEventListener('touchstart', this._onTouchStart.bind(this), false)
 				}
 
 				// Called during construction to allow the app to populate this.scene
@@ -83,7 +82,6 @@
 					this.scene.add(directionalLight)
 				}
 
-				// Save screen taps as normalized coordinates for use in this.updateScene
 				_onTouchStart(ev){
 					if (!ev.touches || ev.touches.length === 0) {
 						console.error('No touches on touch event', ev)
@@ -95,13 +93,18 @@
 					const normalizedY = ev.touches[0].clientY / window.innerHeight
 			
 					this.session.requestHitTest(normalizedX, normalizedY).then((hits)=>{
-						if (!hits) {
+						
+						if (hits.length === 0) {
 							this._messageEl.innerHTML = 'miss'
 							return
 						}
 						this._messageEl.innerHTML = 'hit'
-						const xrObject3D = this.getXRObject3D(hits[0].createAnchor())
-						xrObject3D.add(this._createSceneGraphNode())
+						
+						this.session.requestAnchorFromHit(hits[0]).then((hitAnchor)=>{
+							const anchorObject3D = this.getXRObject3D(hitAnchor)
+							anchorObject3D.add(this._createSceneGraphNode())
+						})
+
 					}).catch((err)=>{
 						this.showMessage(err)
 					})

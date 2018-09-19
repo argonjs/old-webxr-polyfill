@@ -1,4 +1,5 @@
 import XRTracker from '../XRTracker.js'
+import XRAnchor from '../XRAnchor.js'
 
 const LICENSE_KEY_MISSING_ERROR = 
 `An encrypted license key is required in order to use the Vuforia extension. 
@@ -8,19 +9,31 @@ and provide the encrypted license key to the init() method`;
 
 export default class ArgonVuforiaTracker extends XRTracker {
 
-    static _requestTracker(session, options) {
+    static _requestTracker(reality, options) {
 		const encryptedLicenseData = options.encryptedLicenseData
         if (!encryptedLicenseData || typeof encryptedLicenseData !== 'string') 
 			throw new Error(LICENSE_KEY_MISSING_ERROR)
-        return this._argonWrapper._request('ar.vuforia.init', {encryptedLicenseData}).then(() => {
-			return new ArgonVuforiaTracker(session)
+		
+		if (!window.ARGON_BROWSER && window.ARGON_BROWSER.xr === true) 
+			throw new Error('ArgonXR browser is required to use the Vuforia tracker')
+
+        return reality._device._argonWrapper._request('vuforia.init', {encryptedLicenseData}).then(() => {
+			return new ArgonVuforiaTracker(reality)
 		});
 	}
 
 	constructor(reality) {
-        this._reality = reality
-		this._argonWrapper = reality._argonWrapper
-		this._objectTracker = new VuforiaObjectTracker(this);
+		super()
+		this._reality = reality
+		this._argonWrapper = reality._device._argonWrapper
+
+		this._argonWrapper._messageHandlers['vuforia.objectTrackerLoadDataSetEvent'] = (evt)=>{
+			console.log(`Vuforia loaded DataSet ${JSON.stringify(evt)}`)
+		}
+
+		this._argonWrapper._messageHandlers['vuforia.objectTrackerActivateDataSetEvent'] = (evt)=>{
+			console.log(`Vuforia activated DataSet ${JSON.stringify(evt)}`)
+		}
 	}
 
 	/**
@@ -29,7 +42,7 @@ export default class ArgonVuforiaTracker extends XRTracker {
 	 */
     setMaxSimultaneousImageTargetsHint(value) {
         let options = {hint:VuforiaHintMaxSimultaneousImageTargets, value};
-        return this._argonWrapper._request('ar.vuforia.setHint', options).then((message) => {
+        return this._argonWrapper._request('vuforia.setHint', options).then((message) => {
             return message.result;
         })
     }
@@ -40,7 +53,7 @@ export default class ArgonVuforiaTracker extends XRTracker {
 	 */
     setMaxSimultaneousObjectTargetsHint(value) {
         let options = {hint:VuforiaHintMaxSimultaneousObjectTargets, value};
-        return this._argonWrapper._request('ar.vuforia.setHint', options).then((message) => {
+        return this._argonWrapper._request('vuforia.setHint', options).then((message) => {
             return message.result;
         })
 	}
@@ -49,9 +62,9 @@ export default class ArgonVuforiaTracker extends XRTracker {
 	 * Fetch a dataset from the provided url. 
 	 * If successfull, resolves to an id which represents the dataset. 
 	 */
-	fetchDataSetFromURL(url) {
+	fetchDataSet(url) {
 		url = resolveURL(url)
-		return this._argonWrapper._request('ar.vuforia.objectTrackerCreateDataSet', { url })
+		return this._argonWrapper._request('vuforia.objectTrackerCreateDataSet', { url })
 			.then((message) => {
 				return message.id;
 			});
@@ -62,20 +75,18 @@ export default class ArgonVuforiaTracker extends XRTracker {
 	 * resolves to an array of the contained trackables
 	 */
 	loadDataSet(id) {
-		return this._argonWrapper._request('ar.vuforia.objectTrackerLoadDataSet', { id }).then((trackables)=>{
+		return this._argonWrapper._request('vuforia.objectTrackerLoadDataSet', { id }).then((trackables)=>{
             const trackablesMap = new Map
             for (const name in trackables) {
-                const trackable = trackables[name]
-                trackablesMap.set(name, {
-                    name,
-                    createAnchor() {
-						const anchor = new XRAnchor(trackable.id)
-						anchor._isTrackable = true
-                        this.reality._anchors.set(anchor.uid, anchor)
-                        return anchor
-                    }
-                })
+				const trackable = trackables[name]
+				const anchor = new ArgonVuforiaTrackableAnchor(trackable.id)
+				anchor._isTrackable = true
+				anchor._name = name
+				anchor._size = trackable.size
+				this._reality._anchors.set(trackable.id, anchor)
+				trackablesMap.set(name, anchor)
             }
+			return trackablesMap
         });
 	}
 
@@ -83,21 +94,21 @@ export default class ArgonVuforiaTracker extends XRTracker {
 	 * Unload a dataset from memory (deactivating it if necessary)
 	 */
 	unloadDataSet(id) {
-		this._argonWrapper._request('ar.vuforia.objectTrackerUnloadDataSet', { id });
+		this._argonWrapper._request('vuforia.objectTrackerUnloadDataSet', { id });
 	}
 
 	/**
 	 * Load (if necessary) and activate a dataset to enable tracking of the contained trackables
 	 */
 	activateDataSet(id) {
-		return this._argonWrapper._request('ar.vuforia.objectTrackerActivateDataSet', { id });
+		return this._argonWrapper._request('vuforia.objectTrackerActivateDataSet', { id });
 	}
 
 	/**
 	 * Deactivate a loaded dataset to disable tracking of the contained trackables
 	 */
 	deactivateDataSet(id) {
-		return this._argonWrapper._request('ar.vuforia.objectTrackerDeactivateDataSet', { id });
+		return this._argonWrapper._request('vuforia.objectTrackerDeactivateDataSet', { id });
 	}
 
 }
@@ -107,31 +118,50 @@ const VuforiaHintMaxSimultaneousObjectTargets = 1
 const VuforiaHintDelayedLoadingObjectDatasets = 2
 
 
+class ArgonVuforiaTrackableAnchor extends XRAnchor {
+	constructor(uid) {
+		super(uid)
+		this._name = null 
+		this._size = null // {x:number, y:number, z:number}
+	}
+
+	get name() {
+		return this._name
+	}
+
+	get size() {
+		return this._size
+	}
+}
+
+
 // class VuforiaObjectTracker extends EventHandlerBase {
 
 // 	constructor(ext) {
 //         super()
 // 		this._argonWrapper = ext._argonWrapper
 
-// 		// this._argonWrapper._messageHandlers.on['ar.vuforia.objectTrackerLoadDataSetEvent'] = (message) => {
+// 		// this._argonWrapper._messageHandlers.on['vuforia.objectTrackerLoadDataSetEvent'] = (message) => {
 // 		// 	this.dispatchEvent(new CustomEvent('datasetloaded', {detail:message}))
 //         // }
 
-//         // this._argonWrapper._messageHandlers.on['ar.vuforia.objectTrackerUnloadDataSetEvent'] = (message) => {
+//         // this._argonWrapper._messageHandlers.on['vuforia.objectTrackerUnloadDataSetEvent'] = (message) => {
 // 		// 	this.dispatchEvent(new CustomEvent('datasetunloaded', {detail:message}))
 //         // }
 
-//         // this._argonWrapper._messageHandlers.on['ar.vuforia.objectTrackerActivateDataSetEvent'] = (message) => {
+//         // this._argonWrapper._messageHandlers.on['vuforia.objectTrackerActivateDataSetEvent'] = (message) => {
 // 		// 	this.dispatchEvent(new CustomEvent('datasetactivated', {detail:message}))
 //         // }
 
-//         // this._argonWrapper._messageHandlers.on['ar.vuforia.objectTrackerDeactivateDataSetEvent'] = (message) => {
+//         // this._argonWrapper._messageHandlers.on['vuforia.objectTrackerDeactivateDataSetEvent'] = (message) => {
 // 		// 	this.dispatchEvent(new CustomEvent('datasetdeactivated', {detail:message}))
 // 		// }
 // 	}
 
 // }
 
+
+const urlParser = document.createElement("a")
 
 function resolveURL(inURL) {
     if (!urlParser) throw new Error("resolveURL requires DOM api");

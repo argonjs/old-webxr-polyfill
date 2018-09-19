@@ -1,4 +1,5 @@
 import MatrixMath from './fill/MatrixMath.js'
+import Quaternion from './fill/Quaternion.js'
 import EventHandlerBase from './fill/EventHandlerBase.js'
 
 /*
@@ -8,6 +9,11 @@ export default class XRCoordinateSystem extends EventHandlerBase {
 	constructor(){
 		super()
 		this.__transform = null
+	}
+
+	// backwards compat
+	get coordinateSystem() {
+		return this
 	}
 
 	getTransformTo(otherCoordinateSystem){

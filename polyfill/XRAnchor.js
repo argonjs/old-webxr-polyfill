@@ -1,5 +1,4 @@
 import XRCoordinateSystem from './XRCoordinateSystem.js'
-import MatrixMath from './fill/MatrixMath';
 
 /*
 XRAnchors provide per-frame coordinates which the Reality attempts to pin "in place".
@@ -35,6 +34,9 @@ export default class XRAnchor extends XRCoordinateSystem {
 	 * When tracking is lost, getTransformTo() reports as if the anchor is stationary
 	 */
 	get isTracking() { return this.__isTracking }
+
+	// backwards compatability
+	get coordinateSystem() { return this }
 
 	set _isTracking(value) {
 		const isTracking = this.__isTracking

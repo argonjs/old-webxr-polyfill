@@ -1,0 +1,393 @@
+
+  <html>
+	<head>
+		<title>Vuforia example</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body, html {
+				padding: 0;
+				margin: 0;
+				overflow: hidden;
+				position: fixed;
+				width: 100%;
+				height: 100vh;
+				-webkit-user-select: none;
+				user-select: none;
+			}
+			#target {
+				width: 100%;
+				height: 100%;
+				position: absolute;
+			}
+			.common-message {
+				position: absolute;
+				top: 50%;
+				left: 50%;
+				transform: translate(-50%, -50%);
+				font-size: 20px;
+			}
+		</style>
+		<link rel="stylesheet" href="../common.css"/>
+		<script src="../libs/three.min.js"></script>
+		<script src="../libs/inflate.min.js"></script>
+		<script src="../libs/three-fbx-loader.js"></script>
+		<script src="../libs/html2canvas.min.js"></script>
+
+		<script src="../libs/postprocessing/EffectComposer.js"></script>
+		<script src="../libs/shaders/CopyShader.js"></script>
+
+		<script src="../libs/postprocessing/ShaderPass.js"></script>
+		<script src="../libs/postprocessing/RenderPass.js"></script>
+		<script src="../libs/postprocessing/OutlinePass.js"></script>
+
+		<script src="../libs/threex.atmospherematerial.js"></script>
+		<script src="../libs/threex.dilategeometry.js"></script>
+		<script src="../libs/threex.geometricglowmesh.js"></script>
+
+		<script type="module" src="../../polyfill/XRPolyfill.js"></script>
+		<script nomodule src="../../dist/webxr-polyfill.js"></script>
+		<script src="../common.js"></script>
+	</head>
+	<body>
+		<div id="target" />
+		<div id="step1" style="display:none">
+			First Step: Remove and inspect the antenna
+		</div>
+		<div onclick="hideMe(this)" id="description">
+			<h2>Vuforia</h2>
+			<h5>(click to dismiss)</h5>
+			<p>This example uses the Vuforia tracker to track image or object trackables (only works in the ArgonXR browser).</p>
+		</div>
+		<script>
+
+            const VUFORIA_LICENSE_DATA = 
+`-----BEGIN PGP MESSAGE-----
+Version: OpenPGP.js v2.3.2
+Comment: http://openpgpjs.org
+
+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
+TDne/ON+Rnj/EKokFOU=
+=kmoQ
+-----END PGP MESSAGE-----
+`;
+
+
+/*
+ARSimplestExample shows how to populate the content scene 
+*/
+class ARSimplestExample extends XRExampleBase {
+	constructor(domElement){
+		super(domElement, false)
+
+		this.marsLanderObject = null;
+		this.bodyLabel = null;
+		this.legLabels = [];
+
+		this.legGlow = []
+
+		this.renderer.shadowMap.enabled = true;
+
+		this.composer = new THREE.EffectComposer(this.renderer)
+		const renderPass = new THREE.RenderPass(this.scene, this.camera)
+		renderPass.renderToScreen = true
+		this.composer.addPass(renderPass)
+		
+		this.outlinePass = new THREE.OutlinePass(new THREE.Vector2( window.innerWidth, window.innerHeight ), this.scene, this.camera)
+		this.outlinePass.edgeStrength = 3.0;
+		this.outlinePass.edgeGlow = 0.0;
+		this.outlinePass.edgeThickness = 1.0;
+		this.outlinePass.pulsePeriod = 0;
+		this.outlinePass.usePatternTexture = false;
+		this.outlinePass.renderToScreen = true
+		// this.composer.addPass(this.outlinePass)
+
+
+		// this.step1 = new THREE.Mesh();
+		// this.step1.geometry = new THREE.PlaneGeometry(5, 20, 32);
+		// this.step1.material = new THREE.MeshBasicMaterial({color: 0x00FF00})
+		// const step1Div = document.getElementById('step1')
+		// step1Div.style.display = 'block'
+		// html2canvas(step1Div).then(canvas => {
+		// 	step1Div.style.display = 'none'
+		// 	this.step1.material.map = new THREE.Texture(canvas);
+		// 	this.step1.material.map.needsUpdate = true;
+		// 	this.step1.material.needsUpdate = true;
+		// })
+
+		// this.camera.add(this.step1);
+	}
+
+	// Called after the session is created to allow the app to populate the THREE.Scene
+	initializeScene(){
+		
+		this.session.requestTracker('ARGON_vuforia', {encryptedLicenseData:VUFORIA_LICENSE_DATA}).then((vuforia)=>{
+			return Promise.all([
+				vuforia.fetchDataSet('./resources/VuforiaMars_ModelTarget.xml').then((dataSetId)=>{
+					return vuforia.loadDataSet(dataSetId).then((trackables)=>{
+						const marsLanderAnchor = trackables.get('VuforiaMars_ModelTarget')
+						const marsLanderObject = this.getXRObject3D(marsLanderAnchor)
+						// Add a box around the model
+						const modelSize = marsLanderAnchor.size
+						const box = new THREE.LineSegments(
+							new THREE.EdgesGeometry(new THREE.BoxBufferGeometry(modelSize.x, modelSize.y, modelSize.z)),
+							new THREE.LineBasicMaterial({ color: '#FF0000' })
+						)
+						box.position.y = modelSize.y / 2
+						marsLanderObject.add(box)
+						marsLanderObject.add(new THREE.AxesHelper(0.1))
+						
+						// var loader = new THREE.STLLoader()
+						// loader.load('./resources/VuforiaMars.v3d', function (geometry) {
+						//   var material = new THREE.MeshNormalMaterial()
+						//   var mesh = new THREE.Mesh(geometry, material)
+						//   scene.add(mesh)
+						// })
+
+						const landerPromise = new Promise((resolve) => {
+							var loader = new THREE.FBXLoader();
+							loader.load( './resources/Lander.fbx', resolve );
+						}).then((object) => {
+
+							// this.outlinePass.selectedObjects = [object]
+
+
+							
+							console.log(object)
+							object.scale.set(0.0102,0.0102,0.0102)
+							object.position.set(0.0006, 0, 0.077)
+							
+							const lander = window.lander = object.children[0]
+							marsLanderObject.add( object );
+
+							let tempMesh = new THREE.Mesh(new THREE.Geometry().fromBufferGeometry(lander.getObjectByName('leg1').geometry))
+							this.legGlow[1] = new THREEx.GeometricGlowMesh(tempMesh);
+							lander.add(this.legGlow[1].object3d)
+
+							tempMesh = new THREE.Mesh(new THREE.Geometry().fromBufferGeometry(lander.getObjectByName('leg2').geometry))
+							this.legGlow[2] = new THREEx.GeometricGlowMesh(tempMesh);
+							lander.add(this.legGlow[2].object3d)
+
+							tempMesh = new THREE.Mesh(new THREE.Geometry().fromBufferGeometry(lander.getObjectByName('leg3').geometry))
+							this.legGlow[3] = new THREEx.GeometricGlowMesh(tempMesh);
+							lander.add(this.legGlow[3].object3d)
+
+
+							const material = lander.getObjectByName('body_top').material;
+							// material.opacity = 0;
+
+							const bodyLabel = this.bodyLabel = makeTextSprite( "Viking Lander", 
+								{ fontsize: 24, borderColor: {r:255, g:0, b:0, a:1.0}, backgroundColor: {r:255, g:100, b:100, a:0.8} } );
+							// bodyLabel.position.set(-85,105,55);
+							bodyLabel.position.set(0,0.1,0)
+							marsLanderObject.add(bodyLabel)
+
+							const leg1 = this.legLabels[1] = makeTextSprite( "Leg 1", 
+								{ fontsize: 32, fontface: "Georgia", borderColor: {r:0, g:0, b:255, a:1.0} } );
+							leg1.position.set(0.06,0,-0.06);
+							marsLanderObject.add(leg1)
+
+							const leg2 = this.legLabels[2] = makeTextSprite( "Leg 2", 
+								{ fontsize: 32, fontface: "Georgia", borderColor: {r:0, g:0, b:255, a:1.0} } );
+							leg2.position.set(-0.12,0,-0.06);
+							marsLanderObject.add(leg2)
+
+							const leg3 = this.legLabels[3] = makeTextSprite( "Leg 3", 
+								{ fontsize: 32, fontface: "Georgia", borderColor: {r:0, g:0, b:255, a:1.0} } );
+							leg3.position.set(0,0,0.08);
+							marsLanderObject.add(leg3)
+						})
+
+						return vuforia.activateDataSet(dataSetId)
+					})
+				}),
+				vuforia.fetchDataSet('./resources/StonesAndChips.xml').then((dataSetId)=>{
+					return vuforia.loadDataSet(dataSetId).then((trackables)=>{
+						const stonesAnchor = trackables.get('stones') 
+						const stonesObject = this.getXRObject3D(stonesAnchor)
+						// Add a box to the stones trackable
+						const imageSize = stonesAnchor.size
+						const box = new THREE.Mesh(
+							new THREE.BoxBufferGeometry(imageSize.x, imageSize.y, 0.001),
+							new THREE.MeshPhongMaterial({ color: '#DDFFDD', opacity:0.5 })
+						)
+						box.position.z = 0.0005
+						stonesObject.add(box)
+						return vuforia.activateDataSet(dataSetId)
+					})
+				})
+			])
+		}).catch((e)=>{
+			this.showMessage(e)
+		})
+
+		// Add some lights to the scene
+		this.scene.add(new THREE.AmbientLight('#FFF', 0.2))
+		const directionalLight = new THREE.DirectionalLight('#FFF', 0.6)
+		directionalLight.position.set(0, 10, 0)
+		this.scene.add(directionalLight)
+
+		// const distanceObserver = new MetricObserver({
+		// 	metric: () => marsLanderObject.position.distanceTo(this.camera),
+		// 	zones: ['near', 0.4, 'far'],
+		// 	delay: 1000,
+		// 	threshold: 0.02
+		// })
+
+		// const textScaleObserver = new MetricObserver({
+		// 	metric: () => screenSpaceFontSizeMetric("16px", textAnchor, this.camera), // pixels per character
+		// 	zones: ['readable', 1, 'unreadable'],
+		// 	delay: 1000,
+		// 	threshold: 0.02
+		// })
+	}
+
+	updateScene() {
+		if (this.bodyLabel) {
+			// if (marsLanderObject.position.distanceTo(this.camera)) {
+
+			// }
+
+			// distanceObserver.update()
+			// if (distanceObserver.zoneChanged) {
+
+			// }
+		}
+	}
+
+	doRender(){
+		this.renderer.clear()
+		this.composer.render(0.01)
+	}
+}
+
+function makeTextSprite( message, parameters )
+{
+	if ( parameters === undefined ) parameters = {};
+	
+	var fontface = parameters.hasOwnProperty("fontface") ? 
+		parameters["fontface"] : "Arial";
+	
+	var fontsize = parameters.hasOwnProperty("fontsize") ? 
+		parameters["fontsize"] : 18;
+	
+	var borderThickness = parameters.hasOwnProperty("borderThickness") ? 
+		parameters["borderThickness"] : 4;
+	
+	var borderColor = parameters.hasOwnProperty("borderColor") ?
+		parameters["borderColor"] : { r:0, g:0, b:0, a:1.0 };
+	
+	var backgroundColor = parameters.hasOwnProperty("backgroundColor") ?
+		parameters["backgroundColor"] : { r:255, g:255, b:255, a:1.0 };
+		
+	var canvas = document.createElement('canvas');
+	var context = canvas.getContext('2d');
+	context.font = "Bold " + fontsize + "px " + fontface;
+    
+	// get size data (height depends only on font size)
+	var metrics = context.measureText( message );
+	var textWidth = metrics.width;
+	
+	// background color
+	context.fillStyle   = "rgba(" + backgroundColor.r + "," + backgroundColor.g + ","
+								  + backgroundColor.b + "," + backgroundColor.a + ")";
+	// border color
+	context.strokeStyle = "rgba(" + borderColor.r + "," + borderColor.g + ","
+								  + borderColor.b + "," + borderColor.a + ")";
+
+	context.lineWidth = borderThickness;
+	roundRect(context, borderThickness/2, borderThickness/2, textWidth + borderThickness, fontsize * 1.4 + borderThickness, 6);
+	// 1.4 is extra height factor for text below baseline: g,j,p,q.
+	
+	// text color
+	context.fillStyle = "rgba(0, 0, 0, 1.0)";
+
+	context.fillText( message, borderThickness, fontsize + borderThickness);
+	
+	// canvas contents will be used for a texture
+	var texture = new THREE.Texture(canvas)
+	texture.needsUpdate = true;
+
+	var spriteMaterial = new THREE.SpriteMaterial( 
+		{ map: texture, useScreenCoordinates: false } );
+	var sprite = new THREE.Sprite( spriteMaterial );
+	sprite.scale.set(0.1,0.05,1.0);
+	return sprite;	
+}
+
+// function for drawing rounded rectangles
+function roundRect(ctx, x, y, w, h, r) 
+{
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.lineTo(x+w-r, y);
+    ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+    ctx.lineTo(x+w, y+h-r);
+    ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+    ctx.lineTo(x+r, y+h);
+    ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+    ctx.lineTo(x, y+r);
+    ctx.quadraticCurveTo(x, y, x+r, y);
+    ctx.closePath();
+    ctx.fill();
+	ctx.stroke();   
+}
+
+
+			window.addEventListener('DOMContentLoaded', () => {
+				setTimeout(() => {
+					try {
+						window.pageApp = new ARSimplestExample(document.getElementById('target'))
+					} catch(e) {
+						console.error('page error', e)
+					}
+				}, 1000)
+			})
+		</script>
+	</body>
+</html>

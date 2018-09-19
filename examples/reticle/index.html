@@ -43,13 +43,13 @@
 		</div>
 		<script>
 			/*
-			HitTestExample shows how to find surfaces or other features and place content relative to them.
+			ReticleExample shows how to display a reticle on surfaces
 
 			In a production application, you would not create a separate anchor for every user action because
 			your application would quickly slow down tracking so many anchors. Instead, find an anchor
 			for groups of content that are positioned relative to some surface or other feature.
 			*/
-			class HitTestExample extends XRExampleBase {
+			class ReticleExample extends XRExampleBase {
 				constructor(domElement){
 					super(domElement, false)
 
@@ -61,6 +61,10 @@
 					this._messageEl.style.left = '10px'
 					this._messageEl.style.color = 'white'
 					this._messageEl.style['font-size'] = '16px'
+
+					this.hitX = 0.5
+					this.hitY = 0.5					
+					this.glCanvas.addEventListener('touchstart', this._onTouchStart.bind(this), false)
 				}
 
 				// Called during construction to allow the app to populate this.scene
@@ -80,14 +84,18 @@
 					let directionalLight = new THREE.DirectionalLight('#FFF', 0.6)
 					directionalLight.position.set(0, 10, 0)
 					this.scene.add(directionalLight)
+
+					this.onHitTestResultBound = this.onHitTestResult.bind(this)
 				}
 
-				// Called once per frame, before render, to give the app a chance to update this.scene
-				updateScene(frame, frameOfReference){
-					const hits = frame.hitTest(0.5,0.5);
+				updateScene() {
+					// request next hit test
+					this.session.requestHitTest(this.hitX, this.hitY).then(this.onHitTestResultBound)
+				}
 
-					if (hits) {
-						const transform = hits[0].getTransformTo(frameOfReference)
+				onHitTestResult(hits) {
+					if (hits.length > 0) {
+						const transform = hits[0].getTransformTo(this.frameOfReference)
 						this.reticle.matrix.fromArray(transform)
 						this.reticle.updateMatrixWorld()
 						this.reticle.visible = true
@@ -95,13 +103,24 @@
 						this.reticle.visible = false
 					}
 				}
+
+				// Save screen taps as normalized coordinates for hit test
+				_onTouchStart(ev){
+					if (!ev.touches || ev.touches.length === 0) {
+						console.error('No touches on touch event', ev)
+						return
+					}
+					//save screen coordinates normalized to 0..1 (0.5,0.5 is at center and 1,1 is at top right)
+					this.hitX = ev.touches[0].clientX / window.innerWidth
+					this.hitY = ev.touches[0].clientY / window.innerHeight
+				}
 			}
 
 
 			window.addEventListener('DOMContentLoaded', () => {
 				setTimeout(() => {
 					try {
-						window.pageApp = new HitTestExample(document.getElementById('target'))
+						window.pageApp = new ReticleExample(document.getElementById('target'))
 					} catch(e) {
 						console.error('page error', e)
 					}

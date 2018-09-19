@@ -45,8 +45,9 @@ export default class XRWebGLLayer extends XRLayer {
 	}
 
 	set framebufferWidth(w){
-		this._width = w;
-		this._context.canvas.width = w;		
+		this._width = w
+		if (this._context.canvas.width !== w)
+			this._context.canvas.width = w		
 	}
 
 	get framebufferWidth(){
@@ -58,7 +59,8 @@ export default class XRWebGLLayer extends XRLayer {
 
 	set framebufferHeight(h){
 		this._height = h;
-		this._context.canvas.height = h;		
+		if (this._context.canvas.height !== h)
+			this._context.canvas.height = h		
 	}
 
 	get framebufferHeight(){
@@ -66,6 +68,10 @@ export default class XRWebGLLayer extends XRLayer {
 		// var pr = window.devicePixelRatio || 1;
 		//return this._context.canvas.clientHeight;
 		return this._height;
+	}
+
+	getViewport(view) {
+		return view.getViewport(this)
 	}
 
 	requestViewportScaling(viewportScaleFactor){

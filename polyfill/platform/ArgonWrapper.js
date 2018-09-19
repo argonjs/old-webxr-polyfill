@@ -1,25 +1,5 @@
 import EventHandlerBase from '../fill/EventHandlerBase.js'
-import * as glMatrix from "../fill/gl-matrix/common.js";
-import * as mat4 from "../fill/gl-matrix/mat4.js";
-import * as quat from "../fill/gl-matrix/quat.js";
-import * as vec3 from "../fill/gl-matrix/vec3.js";
 import MatrixMath from "../fill/MatrixMath.js";
-
-const OPEN = 'ar.session.open';
-const CLOSE = 'ar.session.close';
-const ERROR = 'ar.session.error';
-
-const CONTEXT_UPDATE = 'ar.context.update';
-
-const FOCUS_STATE = 'ar.focus.state'
-const VISIBILITY_STATE = 'ar.visibility.state'
-const VIEWPORT_MODE = 'ar.view.viewportMode'
-
-const ARGON_ROLE = {
-	MANAGER:'RealityManager',
-	REALITY:'RealityViewer',
-	AUGMENTER:'RealityAugmenter'
-}
 
 export default class ArgonWrapper extends EventHandlerBase {
 	
@@ -61,58 +41,71 @@ export default class ArgonWrapper extends EventHandlerBase {
 		this._entityOrientation = []
 		this._entityPosition = []
 
-		this._anchorTrackableIdMap = new Map()
-		this._hitTestResultMap = new Map()
+		this._anchorTrackableIdMap = new Map
+		this._pendingHitTests = {}
 
-		this._messageHandlers = {
-			[OPEN]: (info) => {
-				this._info = info;
-				this._version = info.version || [0];
-				this._isConnected = true;
-				console.log('ArgonWrapper ' + JSON.stringify(info))
-			},
-			[CLOSE]: () => {
-				this._isConnected = false;
-			},
-			[ERROR]: (err) => {
-				console.log('ArgonWrapper received error: ' + err.message);
-			},
+		this._frameTimesCPU = []
 
-			[CONTEXT_UPDATE]: (state) => {
-				this.frameState = state;
+		this.whenConnected = new Promise((resolve) => {
 
-				// support legacy Argon browser 
-				if (state.entities['ar.user'] && !state.entities['ar.device.user']) {
-					state.entities['ar.device.user'] = state.entities['ar.user'];
-				}
-				if (state.entities['ar.stage'] && !state.entities['ar.device.stage']) {
-					state.entities['ar.device.stage'] = state.entities['ar.stage'];
-				}
+			this._messageHandlers = {
+	
+				'xr.frame': (state) => {
+					const startTime = performance.now()
+					this.frameState = state;
 
-				// update stage matrix relative to tracker origin
-				const stageEntityState = state.entities['ar.device.stage']
-				if (stageEntityState && stageEntityState.r === 'ar.device.origin') {
-					this._matrixFromEntityState(this._entityMatrix, stageEntityState)
-					MatrixMath.mat4_invert(this._stageInverseWorldMatrix, this._stageWorldMatrix)
-				}
+					const pendingHitTests = this._pendingHitTests
+					this._pendingHitTests = {}
 
-				this._performNextAnimationFrame()
-			},
+					const hitResults = []
+					for (const id in pendingHitTests) {
+						const pendingTest = pendingHitTests[id]
+						const hitTestResult = state.hitTestResults[id] || []
+						pendingTest.resolve(hitTestResult)
+						hitResults.push(pendingTest.promise)
+					}
 
-			[FOCUS_STATE]: (state) => {
-				console.log('ArgonWrapper focus ' + JSON.stringify(state));
-			},
+					Promise.all(hitResults).then(()=>{
 
-			[VISIBILITY_STATE]: (state) => {
-				console.log('ArgonWrapper visibility ' + JSON.stringify(state));
-			},
+						if (state !== this.frameState) {
+							console.log('skipped frame!')
+						}
 
-			[VIEWPORT_MODE]: (mode) => {
-				console.log('ArgonWrapper viewport mode ' + JSON.stringify(mode))
+						this._performNextAnimationFrame()
+						const endTime = performance.now()
+						this._frameTimesCPU.push(endTime - startTime)
+	
+						if (this._frameTimesCPU.length === 60) {
+							let totalCPUTime = 0
+							for (const time of this._frameTimesCPU) {
+								totalCPUTime += time
+							}
+							this._frameTimesCPU.length = 0
+							const averageCPUTime = totalCPUTime / 60
+							this._send('xr.averageCPUTime', {time: averageCPUTime})
+						}
+					})
+				},
+	
+				// [FOCUS_STATE]: (state) => {
+				// 	console.log('ArgonWrapper focus ' + JSON.stringify(state));
+				// },
+	
+				// [VISIBILITY_STATE]: (state) => {
+				// 	console.log('ArgonWrapper visibility ' + JSON.stringify(state));
+				// },
+	
+				// [VIEWPORT_MODE]: (mode) => {
+				// 	console.log('ArgonWrapper viewport mode ' + JSON.stringify(mode))
+				// },
+	
+				// 'ar.device.state': () => {
+	
+				// }
 			}
-		}
 
-		this.vuforia = new VuforiaService(this)
+
+		})
 
 		this._init();
 	}
@@ -134,67 +127,51 @@ export default class ArgonWrapper extends EventHandlerBase {
 		return MatrixMath.mat4_fromRotationTranslation(matrix, this._entityOrientation, this._entityPosition)
 	}
 
-	getEntityTransformRelativeToStage(id) {
-		const entityState = this.frameState.entities[id]
+	getEntityTransform(id) {
+		if (!this.frameState) return null
+		const entityState = this.frameState.trackableResults[id]
 		if (!entityState) return null
-		const entityReferenceFrame = entityState.r
-
-		if (entityReferenceFrame === 'ar.device.stage' || entityReferenceFrame === 'ar.stage') {
-			return this._matrixFromEntityState(this._entityMatrix, entityState)
-		} else if (entityReferenceFrame === 'ar.device.origin' || entityReferenceFrame === 'ar.origin') {
-			const entityWorldMatrix = this._matrixFromEntityState(this._entityMatrix, entityState)
-			return MatrixMath.mat4_multiply(this._entityMatrix, this._stageInverseWorldMatrix, entityWorldMatrix);
-		}
-		
-		console.log('ArgonWrapper is unable to convert "' + id + '" frame to "stage" frame from frame: ' + entityReferenceFrame);
-		return null
+		if (!entityState.pose) return null
+		this._entityMatrix.set(entityState.pose)
+		return this._entityMatrix
 	}
 
-	getEntityTransformRelativeToOrigin(id) {
-		const entityState = this.frameState.entities[id]
-		if (!entityState) return null
-		const entityReferenceFrame = entityState.r
-
-		if (entityReferenceFrame === 'ar.device.origin' || entityReferenceFrame === 'ar.origin') {
-			return this._matrixFromEntityState(this._entityMatrix, entityState)
-		} else if (entityReferenceFrame === 'ar.device.stage' || entityReferenceFrame === 'ar.stage') {
-			const entityChildMatrix = this._matrixFromEntityState(this._entityMatrix, entityState)
-			return MatrixMath.mat4_multiply(this._entityMatrix, this._stageWorldMatrix, entityChildMatrix)
-		}
-		
-		console.log('ArgonWrapper is unable to convert "' + id + '" frame to "tracker" frame from frame: ' + entityReferenceFrame);
-		return null
-	}
-
-	createMidAirAnchor(uid, transform) {
-		return this._request('xr.createMidAirAnchor', {uid, transform}).then(({trackableId})=>{
-			this._anchorTrackableIdMap.set(uid, trackableId);
+	createMidAirAnchor(uid, pose) {
+		return this._request('xr.createMidAirAnchor', {pose}).then(({id})=>{
+			this._anchorTrackableIdMap.set(uid, id)
 		})
 	}
 
-	createAnchorFromHit(uid, hitId) {
-		return this._request('xr.createAnchorFromHit', {uid, hitId}).then(({trackableId})=>{
-			this._anchorTrackableIdMap.set(uid, trackableId);
-		})
+	createAnchorFromHit(uid, id) {
+		return this._request('xr.createMidAirAnchor', {id, pose})
+		// return this._request('xr.createHitAnchor', {id}).then(({id})=>{
+		// 	this._anchorTrackableIdMap.set(uid, id)
+		// })
 	}
 
-	getAnchorTransformRelativeToStage(uid) {
-		const trackableId = this._anchorTrackableIdMap.get(uid);
-		return this._getEntityTransformRelativeToStage(trackableId)
-	}
-
-	getAnchorTransformRelativeToTracker(uid) {
-		const trackableId = this._anchorTrackableIdMap.get(uid);
-		return this._getEntityTransformRelativeToTracker(trackableId)
+	getAnchorTransform(anchorName) {
+		const id = this._anchorTrackableIdMap.get(anchorName) || anchorName;
+		return this.getEntityTransform(id)
 	}
 
 	requestHitTest(x,y) {
-		return this._request('xr.hitTest',{x,y}).catch((e)=>{
-			console.log('ArgonWrapper is unable to perform hit test');
-			return []
-		}).then((result)=>{
-			return result.hits
+		const id = `[${x},${y}]`
+		let pendingTest = this._pendingHitTests[id]
+
+		if (pendingTest) return pendingTest.promise
+
+		pendingTest = this._pendingHitTests[id] = {}
+
+		pendingTest.promise = new Promise((resolve) => {
+			this._send('xr.hitTest',{id, point:{x, y}})
+			pendingTest.resolve = resolve
 		})
+
+		return pendingTest.promise
+	}
+
+	setImmersiveMode(mode) {
+		return this._request('xr.setImmersiveMode', {mode})
 	}
 
 	_init() {
@@ -236,10 +213,11 @@ export default class ArgonWrapper extends EventHandlerBase {
 		}
 
 		// start connection
-		this._send(OPEN, {
-			version: [1,5,0],
-			role: ARGON_ROLE.AUGMENTER
-		});
+		// this._send(OPEN, {
+		// 	version: [1,5,0],
+		// 	role: ARGON_ROLE.AUGMENTER
+		// });
+		this._send('xr.start')
 	}
 
 	_send(topic, message) {
@@ -289,6 +267,7 @@ export default class ArgonWrapper extends EventHandlerBase {
 	cancelAnimationFrame(id) {
         delete this._callbacks[id];
 	}
+	
 	
 	_performNextAnimationFrame() {
 		const callbacks = this._callbacks;
