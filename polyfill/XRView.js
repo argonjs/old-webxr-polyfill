@@ -11,9 +11,11 @@ export default class XRView {
 		normalizedViewport = new XRViewport(0, 0, 1, 1), 
 		eye = XRView.LEFT){
 		this._projectionMatrix = projectionMatrix
-		this._eyeDisplacement = eyeDisplacementMatrix
+		this._eyeDisplacementMatrix = eyeDisplacementMatrix
 		this._normalizedViewport = normalizedViewport
 		this._eye = eye
+
+		this._didPrintViewMatrixWarning = false
 	}
 
 	get eye(){ return this._eye }
@@ -26,13 +28,12 @@ export default class XRView {
 		}
 	}
 
-	get viewMatrix(){ return this._viewMatrix }
-
-	setViewMatrix(array16){
-		if (!this._viewMatrix) this._viewMatrix = new Float32Array(16)
-		for(let i=0; i < 16; i++){
-			this._viewMatrix[i] = array16[i]
+	get viewMatrix(){ 
+		if (!this._didPrintViewMatrixWarning) {
+			this._didPrintViewMatrixWarning = true
+			console.warn('XRView.viewMatrix is deprecated. Use XRDevicePose.getViewMatrix(), which is inverted from this value')
 		}
+		return this._viewMatrix 
 	}
 
 	getViewport(layer){

@@ -227,13 +227,12 @@ class XRExampleBase {
 		this.renderer.clear()
 
 		this.camera.matrixAutoUpdate = false
-		this.camera.matrix.fromArray(devicePose.poseModelMatrix)
-		this.camera.updateMatrixWorld()
+
 		// Render each view into this.session.baseLayer.context
 		for(const view of frame.views){
 			// Each XRView has its own projection matrix, so set the camera to use that
 			const viewMatrix = devicePose.getViewMatrix(view)
-			this.camera.matrixWorldInverse.fromArray(viewMatrix)
+			this.camera.matrix.fromArray(viewMatrix).getInverse(this.camera.matrix)
 			this.camera.projectionMatrix.fromArray(view.projectionMatrix)
 
 			// Set up the renderer to the XRView's viewport and then render
@@ -242,6 +241,9 @@ class XRExampleBase {
 			this.renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height)
 			this.doRender()
 		}
+		
+		this.camera.matrix.fromArray(devicePose.poseModelMatrix)
+		this.camera.updateMatrixWorld()
 
 		// this.camera.matrixAutoUpdate = false
 

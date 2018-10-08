@@ -103,12 +103,24 @@ class XRPolyfill extends EventHandlerBase {
 		})
 	}
 
+	requestSession(paramters) {
+		return this.requestDevice().then(device => {
+			return device.requestSession(parameters)
+		})
+	}
+
+	supportsSession(parameters) {
+		return this.requestDevice().then(device => {
+			return device.supportsSession(parameters)
+		})
+	}
+
 	// For backwards compatability. TO BE REMOVED.
 	getDisplays() {
 		console.warn('getDisplays() is deprecated, running in compatability mode. '
 			+ 'All session requests will treat "immersive" parameter as true, and document '
 			+ 'will remain visible during "flat" immersive sessions.'
-			+ 'Switch to requestDevice() for normal functionality');
+			+ 'Switch to requestSession() for normal functionality');
 		return this.requestDevice().then(device => {
 			device._forceImmersive = true
 			device._keepDocumentBodyVisible = true

@@ -82,10 +82,11 @@ export default class XRFrame {
 		const poseModelMatrix = this._session._device._pose.getTransformTo(frameOfReference)
 		const devicePose = poseModelMatrix ? new XRDevicePose(poseModelMatrix) : null
 		
-		// compute view.viewMatrix property for backwards compatability
+		// compute inverted view.viewMatrix property for backwards compatability
 		if (devicePose) {
 			for (let view of this.views) {
 				view._viewMatrix = devicePose.getViewMatrix(view)
+				MatrixMath.mat4_invert(view._viewMatrix, view._viewMatrix)
 			}
 		}
 
@@ -112,7 +113,7 @@ export default class XRFrame {
 
 	hitTestNoAnchor(normalizedScreenX, normalizedScreenY) {
 		const hits = this._session.reality._hitTest(normalizedScreenX, normalizedScreenY, XRHit.HINT_HORIZONTAL_PLANE)
-		if (hits.length === 0) return null
+		if (hits.length === 0) return []
 		const hit = hits[0]
 		if (!hit.target) {
 			const dummyAnchor = new XRAnchor()
@@ -120,7 +121,7 @@ export default class XRFrame {
 			this._session.reality._anchors.set(dummyAnchor.uid, dummyAnchor)
 			hit._target = dummyAnchor
 		}
-		return new XRAnchorOffset(hit)
+		return [new XRAnchorOffset(hit)]
 	}
 
 	// deprecated
@@ -166,5 +167,9 @@ export class XRAnchorOffset {
 	// the transform for the default coordinate system (ussually eye-level)
 	getOffsetTransform(coordinateSystem) {
 		return coordinateSystem._transform || MatrixMath.mat4_generateIdentity() // code that uses xranchoroffset can't handle undefined transform
+	}
+
+	get modelMatrix() {
+		return this.anchorUID._hit ? this.anchorUID._hit._transform : null
 	}
 }

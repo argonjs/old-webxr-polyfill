@@ -320,7 +320,7 @@ export default class CameraReality extends Reality {
 
 		} else if (this._argonWrapper !== null) {
 			const centerHitTransform = this._argonWrapper.getEntityTransform('xr.center-hit')
-			if (!centerHitTransform) return null
+			if (!centerHitTransform) return []
 			const hit = new XRHit()
 			hit._transform = centerHitTransform
 			return [hit]

@@ -13,14 +13,11 @@ export default class XRDevicePose {
 	get poseModelMatrix(){ return this.__transform }
 
 	getViewMatrix(view){
-		if (view.viewMatrix) {
-			return new Float32Array(view.viewMatrix)
-		} else if (view.eyeDisplacementMatrix) {
-			return MatrixMath.mat4_multiply(new Float32Array(16), this.__transform, view.eyeDisplacementMatrix)
-			// return MatrixMath.mat4_invert(transform, transform)
+		if (view._eyeDisplacementMatrix) {
+			const transform = MatrixMath.mat4_multiply(new Float32Array(16), this.__transform, view._eyeDisplacementMatrix)
+			return MatrixMath.mat4_invert(transform, transform)
 		} else {
-			return new Float32Array(this.__transform)
-			// return MatrixMath.mat4_invert(transform, transform)
+			return MatrixMath.mat4_invert(new Float32Array(16), this.__transform)
 		}
 	}
 

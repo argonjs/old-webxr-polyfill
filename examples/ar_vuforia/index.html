@@ -32,6 +32,7 @@
 		<script src="../libs/three.min.js"></script>
 		<script src="../libs/inflate.min.js"></script>
 		<script src="../libs/three-fbx-loader.js"></script>
+		<script src="../libs/three-stl-loader.js"></script>
 		<script src="../libs/html2canvas.min.js"></script>
 
 		<script src="../libs/postprocessing/EffectComposer.js"></script>
@@ -199,8 +200,8 @@ class ARSimplestExample extends XRExampleBase {
 
 							
 							console.log(object)
-							object.scale.set(0.0102,0.0102,0.0102)
-							object.position.set(0.0006, 0, 0.077)
+							object.scale.set(0.0101,0.0101,0.0101)
+							object.position.set(0.0006, -0.00, 0.077)
 							
 							const lander = window.lander = object.children[0]
 							marsLanderObject.add( object );
@@ -256,8 +257,28 @@ class ARSimplestExample extends XRExampleBase {
 							new THREE.BoxBufferGeometry(imageSize.x, imageSize.y, 0.001),
 							new THREE.MeshPhongMaterial({ color: '#DDFFDD', opacity:0.5 })
 						)
+						// box.position.z = 0.0005
+						
+						stonesObject.add(box)
+						return vuforia.activateDataSet(dataSetId)
+					})
+				}),
+				vuforia.fetchDataSet('./resources/Treadmill.xml').then((dataSetId)=>{
+					return vuforia.loadDataSet(dataSetId).then((trackables)=>{
+						const treadmillAnchor = trackables.get('treadmill') 
+						const treadmillObject = this.getXRObject3D(treadmillAnchor)
+						// Add a box to the stones trackable
+						const imageSize = treadmillAnchor.size
+						const box = new THREE.Mesh(
+							new THREE.BoxBufferGeometry(imageSize.x, imageSize.y, 0.001),
+							new THREE.MeshPhongMaterial({ color: '#DDFFDD', opacity:0.5 })
+						)
 						box.position.z = 0.0005
 						stonesObject.add(box)
+
+
+						
+
 						return vuforia.activateDataSet(dataSetId)
 					})
 				})
