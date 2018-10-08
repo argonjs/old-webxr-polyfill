@@ -60,6 +60,23 @@ export default class FlatDevice extends XRDevice {
 		this.__workingMatrix = new Float32Array(16)
 		this.__IDENTITY = MatrixMath.mat4_generateIdentity()
 
+		this._immersiveViewportStyle = document.createElement('style')
+		this._immersiveViewportStyle.type = 'text/css'
+		this._immersiveViewportStyle.innerHTML = `
+			html {
+				position: static !important;
+				height: 100vh !important;
+				width: 100vw !important;
+			}
+			.xr-hidden {
+				display: none !important;
+			}
+		`
+		this._immersiveViewportSettings = document.createElement('meta')
+		this._immersiveViewportSettings.id = 'immersive-viewport-settings'
+		this._immersiveViewportSettings.name = 'viewport'
+		this._immersiveViewportSettings.content = 'width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0, viewport-fit=cover'
+
 		this._onWindowResize = () => {
 			if (this.baseLayer && this._arKitWrapper === null) {
 				this.baseLayer.framebufferWidth = this.baseLayer.context.canvas.clientWidth;
@@ -131,32 +148,28 @@ export default class FlatDevice extends XRDevice {
 		}
 
 		this.baseLayer = baseLayer;
+
 		if (baseLayer) {
 			baseLayer._context.canvas.style.width = "100%";
 			baseLayer._context.canvas.style.height = "100%";
 			baseLayer.framebufferWidth = this._xr._sessionEls.clientWidth;
 			baseLayer.framebufferHeight = this._xr._sessionEls.clientHeight;
-			
 			if (!this._keepDocumentBodyVisible) {
-				document.body.style.display = 'none'
-				document.documentElement.style.height = '0'
+				document.body.classList.add('xr-hidden')
 			}
 			this._xr._realityEls.style.display = ''
 			this._xr._sessionEls.style.display = ''
 			this._xr._sessionEls.appendChild(baseLayer.context.canvas)
-
-			const immersiveViewportSettings = document.createElement('meta')
-			immersiveViewportSettings.id = 'immersive-viewport-settings'
-			immersiveViewportSettings.name = 'viewport'
-			immersiveViewportSettings.content = 'width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0, viewport-fit=cover'
-			document.head.appendChild(immersiveViewportSettings)
+			document.head.appendChild(this._immersiveViewportSettings)
+			document.head.appendChild(this._immersiveViewportStyle)
 		} else {
-			delete document.body.style.display
-			delete document.documentElement.style.height
+			if (!this._keepDocumentBodyVisible) {
+				document.body.classList.remove('xr-hidden')
+			}
 			this._xr._realityEls.style.display = 'none'
 			this._xr._sessionEls.style.display = 'none'
-			const immersiveViewportSettings = document.queryElement('#immersive-viewport-settings')
-			document.head.removeChild(immersiveViewportSettings)
+			document.head.removeChild(this._immersiveViewportSettings)
+			document.head.removeChild(this._immersiveViewportStyle)
 		}
 
 		if (this._argonWrapper) {
